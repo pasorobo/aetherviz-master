@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.8 Dynamics — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .toggle { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:#CBD5E1; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.8</span>
+    <span style="font-weight:600;">Dynamics of Open Chains / 動力学</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">2R Pendulum Arm + Gravity</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button onclick="togglePlay()" id="play-btn" class="btn-success">▶ 開始</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ オイラー・ラグランジュ方程式から運動方程式を導出する</li>
+    <li>□ 慣性行列 M(θ)、コリオリ項 C(θ,θ̇)θ̇、重力項 G(θ) を識別する</li>
+    <li>□ 数値積分でロボットを動かす</li>
+  </ul>
+
+  <h2>運動方程式</h2>
+  <div>$$ M(\theta)\ddot\theta + C(\theta,\dot\theta)\dot\theta + G(\theta) = \tau $$</div>
+
+  <h2>2R アーム慣性行列 (リンク先端に集中質量)</h2>
+  <div>$$ M = \begin{bmatrix} m_1 L_1^2 + m_2(L_1^2 + L_2^2 + 2L_1L_2 c_2) & m_2(L_2^2 + L_1L_2 c_2) \\ m_2(L_2^2 + L_1L_2 c_2) & m_2 L_2^2 \end{bmatrix} $$</div>
+
+  <h2>重力項</h2>
+  <div>$$ G(\theta) = \begin{bmatrix} (m_1+m_2)gL_1 c_1 + m_2 g L_2 c_{12} \\ m_2 g L_2 c_{12} \end{bmatrix} $$</div>
+
+  <h2>シミュレーション</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    半陰的オイラー法、Δt = 5ms。<br>
+    関節速度に粘性減衰 b·θ̇ を加算（数値安定化）。
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>状態</h2>
+  <div>θ = <span id="theta-readout"></span></div>
+  <div>θ̇ = <span id="dtheta-readout"></span></div>
+  <div>θ̈ = <span id="ddtheta-readout"></span></div>
+  <div style="margin-top:8px;">M(θ):</div>
+  <div class="matrix" id="M-display"></div>
+  <div style="margin-top:8px;">C(θ,θ̇)θ̇:</div>
+  <div class="matrix" id="C-display"></div>
+  <div style="margin-top:8px;">G(θ):</div>
+  <div class="matrix" id="G-display"></div>
+  <div style="margin-top:8px;">エネルギー (KE + PE):</div>
+  <div class="matrix" id="E-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>関節トルク (入力)</h2>
+  <label>τ₁ <span id="tau1-val">0.00</span></label>
+  <input type="range" id="tau1" min="-15" max="15" value="0" step="0.1">
+  <label>τ₂ <span id="tau2-val">0.00</span></label>
+  <input type="range" id="tau2" min="-10" max="10" value="0" step="0.1">
+
+  <h2>パラメータ</h2>
+  <label>m₁ <span id="m1-val">1.0</span></label>
+  <input type="range" id="m1" min="0.2" max="3" value="1.0" step="0.1">
+  <label>m₂ <span id="m2-val">1.0</span></label>
+  <input type="range" id="m2" min="0.2" max="3" value="1.0" step="0.1">
+  <label>g <span id="g-val">9.81</span></label>
+  <input type="range" id="g" min="0" max="20" value="9.81" step="0.05">
+  <label>減衰 b <span id="b-val">0.10</span></label>
+  <input type="range" id="b" min="0" max="1" value="0.10" step="0.01">
+
+  <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="btn-secondary" onclick="setPose('horizontal')">水平に持ち上げ</button>
+    <button class="btn-secondary" onclick="setPose('drop')">自由落下</button>
+  </div>
+</div>
+
+<script>
+// ====== Three.js (front view, vertical plane) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-3.5, 3.5, 3.5*H/W, -3.5*H/W, 0.1, 100);
+camera.position.set(0, 0, 8);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.8));
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+// グリッド (xy 平面の縦壁、front view)
+const grid = new THREE.GridHelper(8, 16, 0x334155, 0x1E293B);
+grid.rotation.x = Math.PI/2;
+scene.add(grid);
+
+// 重力矢印
+const gArrow = new THREE.ArrowHelper(new THREE.Vector3(0,-1,0), new THREE.Vector3(2.8, 2.5, 0), 0.7, 0xFB923C, 0.2, 0.12);
+scene.add(gArrow);
+// "g" ラベル: Three.js Sprite + canvas
+function makeTextSprite(text, color='#FB923C'){
+  const c = document.createElement('canvas'); c.width=64; c.height=64;
+  const ctx = c.getContext('2d');
+  ctx.font='bold 40px Inter';
+  ctx.fillStyle=color; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(text, 32, 32);
+  const tex = new THREE.CanvasTexture(c);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true}));
+  s.scale.set(0.4, 0.4, 1);
+  return s;
+}
+const gLabel = makeTextSprite('g');
+gLabel.position.set(2.55, 2.1, 0);
+scene.add(gLabel);
+
+// ====== 2R アーム ======
+const L1=1.2, L2=1.0;
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5, roughness:0.4});
+const j1Mat = new THREE.MeshStandardMaterial({color:0xFACC15});
+const massMat = new THREE.MeshStandardMaterial({color:0x06B6D4});
+const massMat2 = new THREE.MeshStandardMaterial({color:0xA855F7});
+
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), j1Mat));
+
+const link1Group = new THREE.Group();
+scene.add(link1Group);
+const link1 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, L1, 16), linkMat);
+link1.position.x = L1/2;
+link1.rotation.z = Math.PI/2;
+link1Group.add(link1);
+
+const m1ball = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), massMat);
+m1ball.position.x = L1;
+link1Group.add(m1ball);
+
+const link2Group = new THREE.Group();
+link2Group.position.x = L1;
+link1Group.add(link2Group);
+const link2 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, L2, 16), linkMat);
+link2.position.x = L2/2;
+link2.rotation.z = Math.PI/2;
+link2Group.add(link2);
+const m2ball = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 16), massMat2);
+m2ball.position.x = L2;
+link2Group.add(m2ball);
+
+// 軌跡（先端）
+let trailPoints = [];
+let trailLine = null;
+
+function applyAngles(t1, t2){
+  link1Group.rotation.z = t1;
+  link2Group.rotation.z = t2;
+  // 質量サイズで視覚化
+  m1ball.scale.setScalar(Math.cbrt(state.params.m1));
+  m2ball.scale.setScalar(Math.cbrt(state.params.m2));
+}
+
+// ====== 動力学計算 ======
+const state = {
+  theta: [Math.PI/2, 0],   // 初期：垂直上向き
+  dtheta: [0, 0],
+  tau: [0, 0],
+  params: {m1:1.0, m2:1.0, g:9.81, b:0.10},
+  playing: false
+};
+
+function dynamics(theta, dtheta, tau, p){
+  const c2 = Math.cos(theta[1]);
+  const s2 = Math.sin(theta[1]);
+  const c1 = Math.cos(theta[0]);
+  const c12 = Math.cos(theta[0]+theta[1]);
+
+  // M(θ)
+  const M11 = p.m1*L1*L1 + p.m2*(L1*L1 + L2*L2 + 2*L1*L2*c2);
+  const M12 = p.m2*(L2*L2 + L1*L2*c2);
+  const M22 = p.m2*L2*L2;
+
+  // C(θ,θ̇)θ̇  (Coriolis + centrifugal)
+  const C1 = -p.m2*L1*L2*s2*(2*dtheta[0]*dtheta[1] + dtheta[1]*dtheta[1]);
+  const C2 = p.m2*L1*L2*s2*dtheta[0]*dtheta[0];
+
+  // G(θ)
+  const G1 = (p.m1+p.m2)*p.g*L1*c1 + p.m2*p.g*L2*c12;
+  const G2 = p.m2*p.g*L2*c12;
+
+  // 粘性減衰
+  const damp1 = p.b * dtheta[0];
+  const damp2 = p.b * dtheta[1];
+
+  // M⁻¹(τ - C - G - bθ̇)
+  const rhs1 = tau[0] - C1 - G1 - damp1;
+  const rhs2 = tau[1] - C2 - G2 - damp2;
+
+  const det = M11*M22 - M12*M12;
+  const ddtheta1 = (M22*rhs1 - M12*rhs2) / det;
+  const ddtheta2 = (-M12*rhs1 + M11*rhs2) / det;
+
+  return {
+    ddtheta:[ddtheta1, ddtheta2],
+    M:[[M11,M12],[M12,M22]],
+    C:[C1,C2], G:[G1,G2]
+  };
+}
+
+function totalEnergy(theta, dtheta, p){
+  const c1 = Math.cos(theta[0]);
+  const s1 = Math.sin(theta[0]);
+  const s12 = Math.sin(theta[0]+theta[1]);
+  // KE
+  const v1sq = L1*L1*dtheta[0]*dtheta[0];
+  const sumDot = dtheta[0]+dtheta[1];
+  const v2sq = L1*L1*dtheta[0]*dtheta[0] + L2*L2*sumDot*sumDot
+             + 2*L1*L2*Math.cos(theta[1])*dtheta[0]*sumDot;
+  const KE = 0.5*p.m1*v1sq + 0.5*p.m2*v2sq;
+  // PE (基準：joint1 高さ 0、上方向 + sin)
+  const PE = p.m1*p.g*L1*s1 + p.m2*p.g*(L1*s1 + L2*s12);
+  return KE + PE;
+}
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+function fmtMat2(M){return M.map(r=>'['+r.map(fmt).join(' ')+']').join('\n');}
+
+function update(){
+  applyAngles(state.theta[0], state.theta[1]);
+  const dyn = dynamics(state.theta, state.dtheta, state.tau, state.params);
+
+  document.getElementById('theta-readout').textContent =
+    `(${(state.theta[0]*180/Math.PI).toFixed(1)}°, ${(state.theta[1]*180/Math.PI).toFixed(1)}°)`;
+  document.getElementById('dtheta-readout').textContent =
+    `(${state.dtheta[0].toFixed(2)}, ${state.dtheta[1].toFixed(2)}) rad/s`;
+  document.getElementById('ddtheta-readout').textContent =
+    `(${dyn.ddtheta[0].toFixed(2)}, ${dyn.ddtheta[1].toFixed(2)}) rad/s²`;
+  document.getElementById('M-display').textContent = fmtMat2(dyn.M);
+  document.getElementById('C-display').textContent = `[${fmt(dyn.C[0])} ${fmt(dyn.C[1])}]`;
+  document.getElementById('G-display').textContent = `[${fmt(dyn.G[0])} ${fmt(dyn.G[1])}]`;
+  document.getElementById('E-display').textContent = totalEnergy(state.theta, state.dtheta, state.params).toFixed(3) + ' J';
+
+  // 軌跡描画
+  const tipX = L1*Math.cos(state.theta[0]) + L2*Math.cos(state.theta[0]+state.theta[1]);
+  const tipY = L1*Math.sin(state.theta[0]) + L2*Math.sin(state.theta[0]+state.theta[1]);
+  trailPoints.push([tipX, tipY]);
+  if(trailPoints.length > 300) trailPoints.shift();
+  if(trailLine) scene.remove(trailLine);
+  if(trailPoints.length > 1){
+    const tgeom = new THREE.BufferGeometry().setFromPoints(
+      trailPoints.map(p=>new THREE.Vector3(p[0], p[1], 0))
+    );
+    trailLine = new THREE.Line(tgeom, new THREE.LineBasicMaterial({color:0xFB923C, transparent:true, opacity:0.5}));
+    scene.add(trailLine);
+  }
+}
+
+// 数値積分（半陰的オイラー）
+const dt = 0.005;
+function simStep(){
+  const dyn = dynamics(state.theta, state.dtheta, state.tau, state.params);
+  state.dtheta[0] += dyn.ddtheta[0] * dt;
+  state.dtheta[1] += dyn.ddtheta[1] * dt;
+  state.theta[0]  += state.dtheta[0] * dt;
+  state.theta[1]  += state.dtheta[1] * dt;
+}
+
+let lastTime = performance.now();
+function simLoop(){
+  if(!state.playing) return;
+  const now = performance.now();
+  const elapsed = (now - lastTime)/1000;
+  lastTime = now;
+  // 固定 dt で複数ステップ
+  const steps = Math.min(20, Math.floor(elapsed/dt));
+  for(let i=0;i<steps;i++) simStep();
+  update();
+  requestAnimationFrame(simLoop);
+}
+
+['tau1','tau2'].forEach((id,i)=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state.tau[i] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state.tau[i].toFixed(2);
+    if(!state.playing) update();
+  });
+});
+
+['m1','m2','g','b'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state.params[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state.params[id].toFixed(2);
+    if(!state.playing) update();
+  });
+});
+
+function togglePlay(){
+  state.playing = !state.playing;
+  const btn = document.getElementById('play-btn');
+  btn.textContent = state.playing ? '⏸ 停止' : '▶ 開始';
+  if(state.playing){ lastTime = performance.now(); simLoop(); }
+}
+
+function resetState(){
+  state.playing = false;
+  document.getElementById('play-btn').textContent = '▶ 開始';
+  state.theta = [Math.PI/2, 0];
+  state.dtheta = [0, 0];
+  trailPoints = [];
+  if(trailLine) scene.remove(trailLine);
+  update();
+}
+
+function setPose(name){
+  if(name==='horizontal'){
+    state.theta = [0, 0]; state.dtheta=[0,0];
+  } else if(name==='drop'){
+    state.theta = [Math.PI/2, 0]; state.dtheta=[0,0];
+    state.tau=[0,0];
+    document.getElementById('tau1').value=0; document.getElementById('tau2').value=0;
+    document.getElementById('tau1-val').textContent='0.00'; document.getElementById('tau2-val').textContent='0.00';
+  }
+  trailPoints = [];
+  if(trailLine) scene.remove(trailLine);
+  update();
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-3.5; camera.right=3.5; camera.top=3.5*H/W; camera.bottom=-3.5*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.8 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

@@ -10,13 +10,20 @@ AetherViz Master の派生スキルとして、ロボティクス教育に特化
 
 ```
 aetherviz-robotics/
-├── SKILL.md                          # スキル定義（LLM 用プロンプト本体）
-├── README.md                         # 本ファイル
+├── SKILL.md                              # スキル定義（LLM 用プロンプト本体）
+├── README.md                             # 本ファイル
 └── prototypes/
-    ├── ch3-rigid-body-motions.html   # Ch.3 SE(3), 回転、スクリュー、ツイスト
-    ├── ch4-forward-kinematics.html   # Ch.4 PoE 順運動学
-    ├── ch5-velocity-kinematics.html  # Ch.5 ヤコビアン、マニピュラビリティ
-    └── ch6-inverse-kinematics.html   # Ch.6 数値 IK (Newton-Raphson)
+    ├── ch3-rigid-body-motions.html       # Ch.3 SE(3), 回転、スクリュー、ツイスト
+    ├── ch4-forward-kinematics.html       # Ch.4 PoE 順運動学
+    ├── ch5-velocity-kinematics.html      # Ch.5 ヤコビアン、マニピュラビリティ
+    ├── ch6-inverse-kinematics.html       # Ch.6 数値 IK (Newton-Raphson)
+    ├── ch7-closed-chains.html            # Ch.7 4 節リンク、Grübler、Grashof
+    ├── ch8-dynamics.html                 # Ch.8 2R 振子の動力学 (M, C, G)
+    ├── ch9-trajectory-generation.html    # Ch.9 3 次・5 次・台形・S 曲線
+    ├── ch10-motion-planning.html         # Ch.10 RRT サンプリング計画
+    ├── ch11-control.html                 # Ch.11 PID/計算トルク制御
+    ├── ch12-grasping.html                # Ch.12 摩擦円錐・力閉鎖
+    └── ch13-mobile-robots.html           # Ch.13 差動駆動・ICR・Go-to-Goal
 ```
 
 ## クイックスタート
@@ -52,7 +59,13 @@ claude
 | **Ch.4** | **PoE 順運動学** | ✅ プロトタイプ実装済 |
 | **Ch.5** | **ヤコビアン** | ✅ プロトタイプ実装済 |
 | **Ch.6** | **逆運動学** | ✅ プロトタイプ実装済 |
-| Ch.7〜13 | 閉ループ／動力学／軌道／計画／制御／把持／移動 | 未実装（v0.2 以降予定） |
+| **Ch.7** | **閉ループ運動学（4 節リンク）** | ✅ プロトタイプ実装済 |
+| **Ch.8** | **動力学（M, C, G）** | ✅ プロトタイプ実装済 |
+| **Ch.9** | **軌道生成（3 次・5 次・台形・S 曲線）** | ✅ プロトタイプ実装済 |
+| **Ch.10** | **運動計画（RRT）** | ✅ プロトタイプ実装済 |
+| **Ch.11** | **制御（PID・計算トルク）** | ✅ プロトタイプ実装済 |
+| **Ch.12** | **把持（摩擦円錐・力閉鎖）** | ✅ プロトタイプ実装済 |
+| **Ch.13** | **移動ロボット（差動駆動）** | ✅ プロトタイプ実装済 |
 
 ## 設計思想
 
