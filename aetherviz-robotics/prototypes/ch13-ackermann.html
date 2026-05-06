@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.13 Ackermann (Car-like) — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .mode-btn { background:rgba(255,255,255,0.08); padding:4px 8px; }
+  .mode-btn.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.13</span>
+    <span style="font-weight:600;">Ackermann (Car-like) / 車型</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Nonholonomic Constraint</span>
+  </div>
+  <div>
+    <button onclick="resetPose()">姿勢リセット</button>
+    <button onclick="clearTrail()" class="btn-secondary">軌跡クリア</button>
+    <button onclick="togglePlay()" id="play-btn" class="btn-success">▶ 開始</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 自転車モデル (bicycle model) を理解</li>
+    <li>□ 非ホロノミック拘束（横滑りなし）を識別</li>
+    <li>□ 最小回転半径と操舵限界を体感する</li>
+    <li>□ 縦列駐車のような困難な機動を観察</li>
+  </ul>
+
+  <h2>運動学</h2>
+  <div>$$ \dot x = v \cos\phi,\ \dot y = v \sin\phi $$</div>
+  <div>$$ \dot\phi = \frac{v}{L}\tan\delta $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">L = ホイールベース、δ = 操舵角</p>
+
+  <h2>非ホロノミック拘束</h2>
+  <div>$$ \dot x \sin\phi - \dot y \cos\phi = 0 $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    車は<strong>横方向に直接動けない</strong>。<br>
+    縦列駐車が前後切り返しを必要とする理由。
+  </p>
+
+  <h2>最小回転半径</h2>
+  <div>$$ R_{\min} = \frac{L}{\tan\delta_{\max}} $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    ICR は後輪軸の延長線上、後輪中央から距離 R = L/tan(δ)。
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>姿勢</h2>
+  <div class="matrix" id="pose-display"></div>
+  <h2>速度・操舵</h2>
+  <div class="matrix" id="ctrl-display"></div>
+  <h2>瞬間回転半径 R</h2>
+  <div class="matrix" id="icr-display"></div>
+  <h2>非ホロノミック残差</h2>
+  <div class="matrix" id="constraint-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>制御モード</h2>
+  <div style="display:flex; gap:6px;">
+    <button class="mode-btn active" data-mode="manual" onclick="setMode('manual')">Manual</button>
+    <button class="mode-btn" data-mode="goto" onclick="setMode('goto')">Go-to-Pose</button>
+    <button class="mode-btn" data-mode="park" onclick="setMode('park')">縦列駐車</button>
+  </div>
+
+  <div id="manual-controls">
+    <h2>入力</h2>
+    <label>v (m/s) <span id="v-val">1.0</span></label>
+    <input type="range" id="v" min="-2" max="2" value="1.0" step="0.05">
+    <label>操舵 δ (deg) <span id="d-val">0</span></label>
+    <input type="range" id="d" min="-30" max="30" value="0" step="0.5">
+  </div>
+
+  <div id="goto-controls" style="display:none;">
+    <h2>Go-to-Pose</h2>
+    <p style="font-size:11px; color:#94A3B8;">キャンバスをクリックして目標を設定</p>
+    <p style="font-size:11px; color:#22D3EE;">目標: <span id="goal-readout">未設定</span></p>
+    <p style="font-size:10px; color:#94A3B8;">純追従 (Pure Pursuit) ベース、k = 制御ゲイン</p>
+    <label>look-ahead (m) <span id="lookahead-val">1.0</span></label>
+    <input type="range" id="lookahead" min="0.3" max="3" value="1.0" step="0.1">
+  </div>
+
+  <div id="park-controls" style="display:none;">
+    <h2>縦列駐車デモ</h2>
+    <p style="font-size:11px; color:#94A3B8;">2 段階切り返しの定型動作</p>
+    <button onclick="startParking()" class="btn-success">駐車開始</button>
+    <p style="font-size:10px; color:#94A3B8; margin-top:6px;" id="park-phase">待機中</p>
+  </div>
+
+  <h2>機体パラメータ</h2>
+  <label>ホイールベース L <span id="L-val">0.6</span></label>
+  <input type="range" id="L" min="0.3" max="1.5" value="0.6" step="0.05">
+</div>
+
+<script>
+// ====== Three.js ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-4, 4, 4*H/W, -4*H/W, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.7));
+scene.add(new THREE.GridHelper(12, 24, 0x334155, 0x1E293B));
+
+// ====== 車構築 ======
+const carGroup = new THREE.Group();
+scene.add(carGroup);
+
+const bodyMat = new THREE.MeshStandardMaterial({color:0x6366F1, metalness:0.5});
+const carBody = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.15, 0.45), bodyMat);
+carBody.position.set(0.3, 0.08, 0); // 後輪→前輪を 0.6 とすると中央
+carGroup.add(carBody);
+
+const dirMat = new THREE.MeshBasicMaterial({color:0xFB923C});
+const dirMesh = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.12, 12), dirMat);
+dirMesh.rotation.z = -Math.PI/2;
+dirMesh.position.set(0.7, 0.16, 0);
+carGroup.add(dirMesh);
+
+const wheelMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+function makeWheel(){
+  const w = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.04, 16), wheelMat);
+  w.rotation.x = Math.PI/2;
+  return w;
+}
+const wRL = makeWheel(); wRL.position.set(0, 0.08, -0.25); carGroup.add(wRL);
+const wRR = makeWheel(); wRR.position.set(0, 0.08,  0.25); carGroup.add(wRR);
+const wFL = makeWheel(); wFL.position.set(0.6, 0.08, -0.25); carGroup.add(wFL);
+const wFR = makeWheel(); wFR.position.set(0.6, 0.08,  0.25); carGroup.add(wFR);
+
+const trailGroup = new THREE.Group();
+scene.add(trailGroup);
+
+const goalMark = new THREE.Mesh(new THREE.RingGeometry(0.13, 0.17, 24), new THREE.MeshBasicMaterial({color:0x10B981}));
+goalMark.rotation.x = -Math.PI/2;
+goalMark.position.y = 0.03;
+goalMark.visible = false;
+scene.add(goalMark);
+
+const icrMark = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), new THREE.MeshBasicMaterial({color:0xA855F7, transparent:true, opacity:0.7}));
+icrMark.visible = false;
+scene.add(icrMark);
+
+// ====== 駐車スペース ======
+const parkSpaceMat = new THREE.MeshBasicMaterial({color:0xFB923C, transparent:true, opacity:0.25, side:THREE.DoubleSide});
+const parkSpace = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.0), parkSpaceMat);
+parkSpace.rotation.x = -Math.PI/2;
+parkSpace.position.set(0, 0.02, 0);
+parkSpace.visible = false;
+scene.add(parkSpace);
+
+const obstacleMat = new THREE.MeshStandardMaterial({color:0xDC2626});
+const obs1 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.2, 0.5), obstacleMat);
+const obs2 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.2, 0.5), obstacleMat);
+obs1.visible = false; obs2.visible = false;
+scene.add(obs1); scene.add(obs2);
+
+// ====== 状態 ======
+const state = {
+  pose: {x:-2, y:0, phi:0},
+  v: 1.0, delta: 0,
+  L: 0.6,
+  goal: null,
+  lookahead: 1.0,
+  mode: 'manual',
+  playing: false,
+  trail: [],
+  parkPhase: -1
+};
+
+const dt = 0.02;
+let lastTime = performance.now();
+
+// ====== 制御則 ======
+function purePursuit(){
+  if(!state.goal) return {v:0, delta:0};
+  // look-ahead で目標へ向かうステア
+  const dx = state.goal[0] - state.pose.x;
+  const dy = state.goal[1] - state.pose.y;
+  const dist = Math.hypot(dx, dy);
+  if(dist < 0.1) return {v:0, delta:0};
+  // 目標方向
+  const ang = Math.atan2(dy, dx);
+  let alpha = ang - state.pose.phi;
+  while(alpha > Math.PI) alpha -= 2*Math.PI;
+  while(alpha < -Math.PI) alpha += 2*Math.PI;
+  // δ = atan(2 L sin(α) / L_d)
+  const delta = Math.atan2(2*state.L*Math.sin(alpha), state.lookahead);
+  const v = 0.8 * Math.cos(alpha);
+  return {v, delta};
+}
+
+function parkingControl(){
+  // 簡易 2 段階切り返し
+  // Phase 0: 待機
+  // Phase 1: 後退 (バック)、ステア δ=+30
+  // Phase 2: 後退 ステア δ=-30
+  // Phase 3: 前進微調整
+  const ph = state.parkPhase;
+  if(ph === 1){
+    if(state.pose.x > -0.3 && state.pose.y > -0.4){
+      return {v:-0.5, delta:30*Math.PI/180};
+    }
+    state.parkPhase = 2;
+    document.getElementById('park-phase').textContent = '段階 2: 切り返し';
+  }
+  if(ph === 2){
+    if(state.pose.phi > 0.05){
+      return {v:-0.5, delta:-30*Math.PI/180};
+    }
+    state.parkPhase = 3;
+    document.getElementById('park-phase').textContent = '段階 3: 微調整';
+  }
+  if(ph === 3){
+    if(Math.abs(state.pose.x) > 0.05){
+      return {v: state.pose.x > 0 ? -0.2 : 0.2, delta:0};
+    }
+    state.parkPhase = 4;
+    document.getElementById('park-phase').textContent = '✓ 駐車完了';
+  }
+  return {v:0, delta:0};
+}
+
+function startParking(){
+  // 初期姿勢を駐車スペース手前にセット
+  state.pose = {x:1.5, y:1.2, phi:Math.PI};
+  state.parkPhase = 1;
+  state.trail = [];
+  document.getElementById('park-phase').textContent = '段階 1: 後退進入';
+
+  // 障害物配置
+  obs1.position.set(-1.0, 0.1, -0.5); obs1.visible = true;
+  obs2.position.set(1.0, 0.1, -0.5); obs2.visible = true;
+  parkSpace.visible = true;
+
+  if(!state.playing) togglePlay();
+}
+
+function simStep(){
+  let v = state.v, delta = state.delta;
+  if(state.mode === 'goto'){
+    const ctrl = purePursuit();
+    v = ctrl.v; delta = ctrl.delta;
+    state.v = v; state.delta = delta;
+  } else if(state.mode === 'park'){
+    const ctrl = parkingControl();
+    v = ctrl.v; delta = ctrl.delta;
+    state.v = v; state.delta = delta;
+  }
+
+  state.pose.x += v * Math.cos(state.pose.phi) * dt;
+  state.pose.y += v * Math.sin(state.pose.phi) * dt;
+  state.pose.phi += (v/state.L) * Math.tan(delta) * dt;
+
+  if(state.trail.length === 0 ||
+     Math.hypot(state.pose.x - state.trail[state.trail.length-1][0],
+                state.pose.y - state.trail[state.trail.length-1][1]) > 0.04){
+    state.trail.push([state.pose.x, state.pose.y]);
+    if(state.trail.length > 600) state.trail.shift();
+  }
+}
+
+function update(){
+  carGroup.position.set(state.pose.x, 0, -state.pose.y);
+  carGroup.rotation.y = -state.pose.phi;
+  // 前輪のステア
+  wFL.rotation.y = state.delta;
+  wFR.rotation.y = state.delta;
+  // ホイールベース反映
+  wFL.position.x = state.L; wFR.position.x = state.L;
+  carBody.position.x = state.L/2;
+  carBody.scale.x = state.L / 0.6;
+  dirMesh.position.x = state.L + 0.1;
+
+  // 軌跡
+  while(trailGroup.children.length) trailGroup.remove(trailGroup.children[0]);
+  if(state.trail.length > 1){
+    const pts = state.trail.map(p=>new THREE.Vector3(p[0], 0.04, -p[1]));
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    trailGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:0xFB923C, transparent:true, opacity:0.6})));
+  }
+
+  // 目標
+  if(state.goal){
+    goalMark.visible = true;
+    goalMark.position.set(state.goal[0], 0.03, -state.goal[1]);
+  } else if(state.mode !== 'park'){
+    goalMark.visible = false;
+  }
+
+  // ICR (後輪中央から R 離れた点、車体に垂直)
+  const cosP = Math.cos(state.pose.phi), sinP = Math.sin(state.pose.phi);
+  let icrText = '直進中（δ=0）';
+  if(Math.abs(state.delta) > 0.005){
+    const R = state.L / Math.tan(state.delta);
+    const icrX = state.pose.x - R * sinP;
+    const icrY = state.pose.y + R * cosP;
+    icrMark.visible = true;
+    icrMark.position.set(icrX, 0.05, -icrY);
+    icrText = `R = ${R.toFixed(2)} m\nICR = (${icrX.toFixed(2)}, ${icrY.toFixed(2)})`;
+  } else {
+    icrMark.visible = false;
+  }
+
+  // 非ホロノミック残差 (理論的に 0)
+  const xdot = state.v * cosP, ydot = state.v * sinP;
+  const constraint = xdot * sinP - ydot * cosP;
+
+  document.getElementById('pose-display').textContent =
+    `x = ${state.pose.x.toFixed(3)}\ny = ${state.pose.y.toFixed(3)}\nφ = ${(state.pose.phi*180/Math.PI).toFixed(1)}°`;
+  document.getElementById('ctrl-display').textContent =
+    `v = ${state.v.toFixed(2)} m/s\nδ = ${(state.delta*180/Math.PI).toFixed(1)}°`;
+  document.getElementById('icr-display').textContent = icrText;
+  document.getElementById('constraint-display').textContent =
+    `ẋsinφ - ẏcosφ = ${constraint.toExponential(2)}`;
+}
+
+function controlLoop(){
+  if(!state.playing) return;
+  const now = performance.now();
+  const elapsed = (now - lastTime)/1000;
+  lastTime = now;
+  const steps = Math.min(20, Math.floor(elapsed/dt));
+  for(let i=0;i<steps;i++) simStep();
+  update();
+  requestAnimationFrame(controlLoop);
+}
+
+// ====== UI ======
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active', b.dataset.mode === m));
+  document.getElementById('manual-controls').style.display = m==='manual' ? 'block' : 'none';
+  document.getElementById('goto-controls').style.display = m==='goto' ? 'block' : 'none';
+  document.getElementById('park-controls').style.display = m==='park' ? 'block' : 'none';
+  if(m !== 'park'){
+    obs1.visible = false; obs2.visible = false; parkSpace.visible = false;
+  }
+}
+
+document.getElementById('v').addEventListener('input', e=>{
+  state.v = parseFloat(e.target.value);
+  document.getElementById('v-val').textContent = state.v.toFixed(2);
+});
+document.getElementById('d').addEventListener('input', e=>{
+  state.delta = parseFloat(e.target.value)*Math.PI/180;
+  document.getElementById('d-val').textContent = e.target.value;
+});
+document.getElementById('L').addEventListener('input', e=>{
+  state.L = parseFloat(e.target.value);
+  document.getElementById('L-val').textContent = state.L.toFixed(2);
+});
+document.getElementById('lookahead').addEventListener('input', e=>{
+  state.lookahead = parseFloat(e.target.value);
+  document.getElementById('lookahead-val').textContent = state.lookahead.toFixed(2);
+});
+
+renderer.domElement.addEventListener('click', e=>{
+  if(state.mode !== 'goto') return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndcX = ((e.clientX - rect.left)/rect.width)*2 - 1;
+  const ndcY = -((e.clientY - rect.top)/rect.height)*2 + 1;
+  state.goal = [ndcX*4, ndcY*4*H/W];
+  document.getElementById('goal-readout').textContent =
+    `(${state.goal[0].toFixed(2)}, ${state.goal[1].toFixed(2)})`;
+  update();
+});
+
+function togglePlay(){
+  state.playing = !state.playing;
+  document.getElementById('play-btn').textContent = state.playing ? '⏸ 停止' : '▶ 開始';
+  if(state.playing){ lastTime = performance.now(); controlLoop(); }
+}
+
+function resetPose(){
+  state.pose = {x:-2, y:0, phi:0};
+  state.trail = [];
+  state.parkPhase = -1;
+  if(state.mode === 'park'){ obs1.visible=false; obs2.visible=false; parkSpace.visible=false; }
+  update();
+}
+function clearTrail(){ state.trail = []; update(); }
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-4; camera.right=4; camera.top=4*H/W; camera.bottom=-4*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.13 Ackermann Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

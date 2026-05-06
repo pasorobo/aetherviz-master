@@ -13,17 +13,27 @@ aetherviz-robotics/
 ├── SKILL.md                              # スキル定義（LLM 用プロンプト本体）
 ├── README.md                             # 本ファイル
 └── prototypes/
+    ├── ch2-cspace.html                   # Ch.2 C-space ↔ Workspace 二重表示
     ├── ch3-rigid-body-motions.html       # Ch.3 SE(3), 回転、スクリュー、ツイスト
     ├── ch4-forward-kinematics.html       # Ch.4 PoE 順運動学
     ├── ch5-velocity-kinematics.html      # Ch.5 ヤコビアン、マニピュラビリティ
+    ├── ch5-statics.html                  # Ch.5 静力学 τ = Jᵀ F
+    ├── ch5-svd-singularity.html          # Ch.5 SVD 分解と特異姿勢
     ├── ch6-inverse-kinematics.html       # Ch.6 数値 IK (Newton-Raphson)
+    ├── ch6-ur5-ik.html                   # Ch.6 6-DOF 解析的 IK（手首分離）
     ├── ch7-closed-chains.html            # Ch.7 4 節リンク、Grübler、Grashof
+    ├── ch7-stewart-platform.html         # Ch.7 6-UPS Stewart Platform
     ├── ch8-dynamics.html                 # Ch.8 2R 振子の動力学 (M, C, G)
+    ├── ch8-newton-euler.html             # Ch.8 Newton-Euler 再帰アルゴリズム
     ├── ch9-trajectory-generation.html    # Ch.9 3 次・5 次・台形・S 曲線
     ├── ch10-motion-planning.html         # Ch.10 RRT サンプリング計画
+    ├── ch10-astar-potential.html         # Ch.10 A* + Potential Fields
+    ├── ch10-rrt-star.html                # Ch.10 RRT* 漸近最適計画
     ├── ch11-control.html                 # Ch.11 PID/計算トルク制御
+    ├── ch11-tracking-impedance.html      # Ch.11 軌道追従 + インピーダンス
     ├── ch12-grasping.html                # Ch.12 摩擦円錐・力閉鎖
-    └── ch13-mobile-robots.html           # Ch.13 差動駆動・ICR・Go-to-Goal
+    ├── ch13-mobile-robots.html           # Ch.13 差動駆動・ICR・Go-to-Goal
+    └── ch13-ackermann.html               # Ch.13 Ackermann 車型・縦列駐車
 ```
 
 ## クイックスタート
@@ -54,18 +64,18 @@ claude
 | 章 | 概念 | プロトタイプ状態 |
 |----|------|----------------|
 | Ch.1 | プレビュー | 概念のみ（SKILL.md） |
-| Ch.2 | C-space | 概念のみ（SKILL.md） |
-| **Ch.3** | **剛体運動 SE(3)** | ✅ プロトタイプ実装済 |
-| **Ch.4** | **PoE 順運動学** | ✅ プロトタイプ実装済 |
-| **Ch.5** | **ヤコビアン** | ✅ プロトタイプ実装済 |
-| **Ch.6** | **逆運動学** | ✅ プロトタイプ実装済 |
-| **Ch.7** | **閉ループ運動学（4 節リンク）** | ✅ プロトタイプ実装済 |
-| **Ch.8** | **動力学（M, C, G）** | ✅ プロトタイプ実装済 |
-| **Ch.9** | **軌道生成（3 次・5 次・台形・S 曲線）** | ✅ プロトタイプ実装済 |
-| **Ch.10** | **運動計画（RRT）** | ✅ プロトタイプ実装済 |
-| **Ch.11** | **制御（PID・計算トルク）** | ✅ プロトタイプ実装済 |
-| **Ch.12** | **把持（摩擦円錐・力閉鎖）** | ✅ プロトタイプ実装済 |
-| **Ch.13** | **移動ロボット（差動駆動）** | ✅ プロトタイプ実装済 |
+| **Ch.2** | **C-space ↔ Workspace 二重表示** | ✅ プロトタイプ実装済 |
+| **Ch.3** | **剛体運動 SE(3)** | ✅ |
+| **Ch.4** | **PoE 順運動学** | ✅ |
+| **Ch.5** | **ヤコビアン / 静力学 / SVD** | ✅ × 3 |
+| **Ch.6** | **数値 IK / 6-DOF 解析的 IK** | ✅ × 2 |
+| **Ch.7** | **4 節リンク / Stewart Platform** | ✅ × 2 |
+| **Ch.8** | **動力学 (M, C, G) / Newton-Euler** | ✅ × 2 |
+| **Ch.9** | **軌道生成（3 次・5 次・台形・S 曲線）** | ✅ |
+| **Ch.10** | **RRT / A\*+Potential / RRT\*** | ✅ × 3 |
+| **Ch.11** | **PID / 軌道追従 + インピーダンス** | ✅ × 2 |
+| **Ch.12** | **把持（摩擦円錐・力閉鎖）** | ✅ |
+| **Ch.13** | **差動駆動 / Ackermann 車型** | ✅ × 2 |
 
 ## 設計思想
 

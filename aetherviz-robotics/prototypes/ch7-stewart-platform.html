@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.7 Stewart Platform — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .leg-row { display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px dotted #334155; }
+  .leg-bad { color:#EF4444; font-weight:bold; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.7</span>
+    <span style="font-weight:600;">Stewart Platform / 6-UPS パラレル機構</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Hexapod</span>
+  </div>
+  <div>
+    <button onclick="resetPose()">姿勢リセット</button>
+    <button onclick="autoMotion()" id="auto-btn" class="btn-success">▶ 自動運動</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ パラレル機構の基本（直列との対比）を理解</li>
+    <li>□ Stewart プラットフォームの逆運動学（解析的）を導出</li>
+    <li>□ 6 本の脚長に対するワークスペース制約を識別</li>
+    <li>□ 順運動学が困難（数値解必要）であることを実感</li>
+  </ul>
+
+  <h2>逆運動学</h2>
+  <div>$$ \mathbf{p}_i = T_{sp}\,\mathbf{p}_i^{(0)} $$</div>
+  <div>$$ L_i = \|\mathbf{p}_i - \mathbf{b}_i\| $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    各脚の長さは <strong>top アンカー位置 - base アンカー位置</strong> のノルム。<br>
+    pose (x,y,z,φ,θ,ψ) → 6 個の脚長 (L₁..L₆) は<strong>陽に解析可能</strong>。
+  </p>
+
+  <h2>順運動学（参考）</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    与えられた L₁..L₆ から pose を求めるのは<strong>非線形連立方程式</strong>で解析解なし。<br>
+    Newton-Raphson 等で数値解。
+  </p>
+
+  <h2>Grübler 検算</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    N=14 リンク（base、top、6 脚×2 セグメント）<br>
+    J = 6 U + 6 P + 6 S = 18 ジョイント（自由度: U=2, P=1, S=3）<br>
+    DoF = 6(14−1−18) + (12 + 6 + 18) = -30 + 36 = <strong>6</strong>
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>姿勢</h2>
+  <div class="matrix" id="pose-display"></div>
+  <h2>脚長 (m)</h2>
+  <div id="legs-display"></div>
+  <h2>ワークスペース判定</h2>
+  <div id="ws-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>並進</h2>
+  <label>x <span id="x-val">0.0</span></label>
+  <input type="range" id="x" min="-0.4" max="0.4" value="0" step="0.01">
+  <label>y <span id="y-val">0.0</span></label>
+  <input type="range" id="y" min="-0.4" max="0.4" value="0" step="0.01">
+  <label>z <span id="z-val">1.5</span></label>
+  <input type="range" id="z" min="0.8" max="2.2" value="1.5" step="0.01">
+
+  <h2>回転 (deg)</h2>
+  <label>roll φ <span id="rx-val">0</span></label>
+  <input type="range" id="rx" min="-30" max="30" value="0" step="1">
+  <label>pitch θ <span id="ry-val">0</span></label>
+  <input type="range" id="ry" min="-30" max="30" value="0" step="1">
+  <label>yaw ψ <span id="rz-val">0</span></label>
+  <input type="range" id="rz" min="-30" max="30" value="0" step="1">
+
+  <h2>幾何</h2>
+  <label>ベース半径 r_b <span id="rb-val">0.8</span></label>
+  <input type="range" id="rb" min="0.3" max="1.5" value="0.8" step="0.05">
+  <label>トップ半径 r_p <span id="rp-val">0.5</span></label>
+  <input type="range" id="rp" min="0.2" max="1.0" value="0.5" step="0.05">
+</div>
+
+<script>
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0F172A, 6, 25);
+
+let W=window.innerWidth, H=window.innerHeight;
+const camera = new THREE.PerspectiveCamera(55, W/H, 0.1, 100);
+camera.position.set(3.5, 2.0, 3.0);
+camera.lookAt(0, 0.7, 0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.55));
+const dirL = new THREE.DirectionalLight(0xffffff, 0.7);
+dirL.position.set(5, 8, 4); scene.add(dirL);
+scene.add(new THREE.GridHelper(8, 16, 0x334155, 0x1E293B));
+
+// 簡易 OrbitControls
+let azimuth = Math.atan2(camera.position.x, camera.position.z);
+let polar = Math.acos((camera.position.y - 0.7) / Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z));
+let radius = Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z);
+const target = new THREE.Vector3(0, 0.7, 0);
+let drag=false, lx=0, ly=0;
+function uc(){
+  camera.position.x = target.x + radius*Math.sin(polar)*Math.sin(azimuth);
+  camera.position.y = target.y + radius*Math.cos(polar);
+  camera.position.z = target.z + radius*Math.sin(polar)*Math.cos(azimuth);
+  camera.lookAt(target);
+}
+renderer.domElement.addEventListener('mousedown', e=>{drag=true; lx=e.clientX; ly=e.clientY;});
+window.addEventListener('mouseup', ()=>drag=false);
+window.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  azimuth -= (e.clientX-lx)*0.005;
+  polar = Math.max(0.1, Math.min(Math.PI-0.1, polar - (e.clientY-ly)*0.005));
+  lx=e.clientX; ly=e.clientY; uc();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  radius = Math.max(2, Math.min(20, radius + e.deltaY*0.001*radius));
+  uc(); e.preventDefault();
+}, {passive:false});
+
+// ====== Stewart Platform ======
+const state = { x:0, y:0, z:1.5, rx:0, ry:0, rz:0, rb:0.8, rp:0.5 };
+const LEG_MIN = 0.8, LEG_MAX = 2.5;
+
+// アンカー点（ベース、トップ）
+function getAnchors(){
+  // ベース: 60°おきにペアで配置（実 Stewart は 3 ペア）
+  const baseAngles = [0, 60, 120, 180, 240, 300].map(a=>a*Math.PI/180);
+  // 各ペアのオフセット (ベースは少しオフセットあり)
+  const baseOffsetA = [-15, 15, 105, 135, 225, 255].map(a=>a*Math.PI/180);
+  const topOffsetA  = [-45, 45, 75, 165, 195, 285].map(a=>a*Math.PI/180);
+  const base = baseOffsetA.map(a => [state.rb*Math.cos(a), 0, state.rb*Math.sin(a)]);
+  const top  = topOffsetA.map(a => [state.rp*Math.cos(a), 0, state.rp*Math.sin(a)]);
+  return {base, top};
+}
+
+// 回転行列（XYZ オイラー、deg → rad）
+function rotMat(rx, ry, rz){
+  const cx=Math.cos(rx), sx=Math.sin(rx);
+  const cy=Math.cos(ry), sy=Math.sin(ry);
+  const cz=Math.cos(rz), sz=Math.sin(rz);
+  // Rz Ry Rx 順
+  return [
+    [cy*cz,  sx*sy*cz-cx*sz,  cx*sy*cz+sx*sz],
+    [cy*sz,  sx*sy*sz+cx*cz,  cx*sy*sz-sx*cz],
+    [-sy,    sx*cy,           cx*cy]
+  ];
+}
+
+function applyT(R, p, v){
+  return [R[0][0]*v[0]+R[0][1]*v[1]+R[0][2]*v[2]+p[0],
+          R[1][0]*v[0]+R[1][1]*v[1]+R[1][2]*v[2]+p[1],
+          R[2][0]*v[0]+R[2][1]*v[1]+R[2][2]*v[2]+p[2]];
+}
+
+// ====== 構築 ======
+const baseGroup = new THREE.Group();
+scene.add(baseGroup);
+const topGroup = new THREE.Group();
+scene.add(topGroup);
+const legsGroup = new THREE.Group();
+scene.add(legsGroup);
+
+const baseMat = new THREE.MeshStandardMaterial({color:0x475569, metalness:0.6});
+const topMat = new THREE.MeshStandardMaterial({color:0x6366F1, metalness:0.6});
+const anchorMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+const legMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5});
+const legBadMat = new THREE.MeshStandardMaterial({color:0xEF4444, emissive:0xEF4444, emissiveIntensity:0.3});
+
+function rebuild(){
+  while(baseGroup.children.length) baseGroup.remove(baseGroup.children[0]);
+  while(topGroup.children.length) topGroup.remove(topGroup.children[0]);
+  while(legsGroup.children.length) legsGroup.remove(legsGroup.children[0]);
+
+  const {base, top} = getAnchors();
+
+  // ベースプレート（円盤）
+  const basePlate = new THREE.Mesh(new THREE.CylinderGeometry(state.rb*1.05, state.rb*1.05, 0.05, 32), baseMat);
+  basePlate.position.y = -0.025;
+  baseGroup.add(basePlate);
+  base.forEach(b=>{
+    const a = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 12), anchorMat);
+    a.position.set(b[0], b[1], b[2]);
+    baseGroup.add(a);
+  });
+
+  // トッププレート
+  const topPlate = new THREE.Mesh(new THREE.CylinderGeometry(state.rp*1.05, state.rp*1.05, 0.05, 32), topMat);
+  topGroup.add(topPlate);
+  top.forEach(t=>{
+    const a = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), anchorMat);
+    a.position.set(t[0], t[1], t[2]);
+    topGroup.add(a);
+  });
+
+  // pose 適用
+  const R = rotMat(state.rx*Math.PI/180, state.ry*Math.PI/180, state.rz*Math.PI/180);
+  const p = [state.x, state.z, state.y];  // Three.js y-up なので z(world) → y(scene)
+  topGroup.position.set(p[0], p[1], p[2]);
+  topGroup.rotation.set(state.rx*Math.PI/180, state.rz*Math.PI/180, state.ry*Math.PI/180);
+
+  // 脚を計算して描画
+  const legLengths = [];
+  const wsOK = [];
+  for(let i=0;i<6;i++){
+    const tWorld = applyT(R, p, top[i]);
+    const len = Math.hypot(tWorld[0]-base[i][0], tWorld[1]-base[i][1], tWorld[2]-base[i][2]);
+    legLengths.push(len);
+    const ok = len >= LEG_MIN && len <= LEG_MAX;
+    wsOK.push(ok);
+
+    // 円柱（脚）
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, len, 12), ok ? legMat : legBadMat);
+    cyl.position.set((tWorld[0]+base[i][0])/2, (tWorld[1]+base[i][1])/2, (tWorld[2]+base[i][2])/2);
+    // 回転：y 軸を base→tip に向ける
+    const dir = new THREE.Vector3(tWorld[0]-base[i][0], tWorld[1]-base[i][1], tWorld[2]-base[i][2]).normalize();
+    const axis = new THREE.Vector3(0,1,0).cross(dir).normalize();
+    const ang = Math.acos(new THREE.Vector3(0,1,0).dot(dir));
+    cyl.quaternion.setFromAxisAngle(axis, ang);
+    legsGroup.add(cyl);
+  }
+
+  // HUD 更新
+  document.getElementById('pose-display').textContent =
+    `(${state.x.toFixed(2)}, ${state.y.toFixed(2)}, ${state.z.toFixed(2)})\n` +
+    `RPY = (${state.rx}°, ${state.ry}°, ${state.rz}°)`;
+
+  let html = '';
+  for(let i=0;i<6;i++){
+    const cls = wsOK[i] ? '' : 'leg-bad';
+    html += `<div class="leg-row ${cls}"><span>L${i+1}</span><span>${legLengths[i].toFixed(3)} m</span></div>`;
+  }
+  document.getElementById('legs-display').innerHTML = html;
+
+  const allOK = wsOK.every(x=>x);
+  document.getElementById('ws-display').innerHTML = allOK
+    ? `<span style="color:#22C55E;">✓ 全脚 ${LEG_MIN}-${LEG_MAX}m 範囲内</span>`
+    : `<span style="color:#EF4444;">⚠ ${wsOK.filter(x=>!x).length} 脚が範囲外</span>`;
+}
+
+// 回転に関しては Three.js で直接適用したいので簡略化のため
+// topGroup.rotation を Euler で設定（オーダーに注意）
+function update(){
+  const R = rotMat(state.rx*Math.PI/180, state.ry*Math.PI/180, state.rz*Math.PI/180);
+  rebuild();
+}
+
+// ====== UI ======
+['x','y','z','rx','ry','rz','rb','rp'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+    update();
+  });
+});
+
+function resetPose(){
+  Object.assign(state, {x:0, y:0, z:1.5, rx:0, ry:0, rz:0});
+  ['x','y','z','rx','ry','rz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+  });
+  update();
+}
+
+let autoOn = false;
+function autoMotion(){
+  autoOn = !autoOn;
+  document.getElementById('auto-btn').textContent = autoOn ? '⏸ 停止' : '▶ 自動運動';
+  if(autoOn) tick();
+}
+function tick(){
+  if(!autoOn) return;
+  const t = performance.now()/1000;
+  state.x = 0.2 * Math.cos(t*0.5);
+  state.y = 0.2 * Math.sin(t*0.5);
+  state.z = 1.5 + 0.15 * Math.sin(t*0.7);
+  state.rx = 15 * Math.sin(t*0.4);
+  state.ry = 15 * Math.cos(t*0.6);
+  state.rz = 10 * Math.sin(t*0.3);
+  ['x','y','z','rx','ry','rz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id].toFixed(0)+'°' : state[id].toFixed(2);
+  });
+  update();
+  requestAnimationFrame(tick);
+}
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.aspect = W/H; camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.7 Stewart Platform · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

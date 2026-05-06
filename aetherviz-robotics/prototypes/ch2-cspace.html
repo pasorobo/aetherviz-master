@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.2 C-Space Dual View — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #ws-svg, #cs-svg { position:absolute; top:80px; bottom:200px; }
+  #ws-svg { left:370px; right:50%; }
+  #cs-svg { left:50%; right:370px; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; left:12px; right:12px; padding:14px; z-index:5; display:flex; gap:20px; align-items:flex-start; }
+  .panel-section { flex:1; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .panel-title { color:#FB923C; font-size:13px; font-weight:600; margin-bottom:6px; }
+  .matrix { background:rgba(0,0,0,0.4); padding:6px; border-radius:6px; font-family:'Courier New',monospace; font-size:11px; }
+</style>
+</head>
+<body>
+
+<svg id="ws-svg" class="glass" xmlns="http://www.w3.org/2000/svg"></svg>
+<svg id="cs-svg" class="glass" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.2</span>
+    <span style="font-weight:600;">Configuration Space (Dual View)</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Workspace ↔ C-space</span>
+  </div>
+  <div>
+    <button onclick="resetObs()">障害物クリア</button>
+    <button onclick="loadDemo()" class="btn-secondary">デモシーン</button>
+    <button onclick="recomputeCS()" class="btn-secondary">C-space 再計算</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ ワークスペース（物理空間）と C-space（関節空間）の対応を理解</li>
+    <li>□ 円形障害物 → C-obstacle が複雑形状になる様子を観察</li>
+    <li>□ C-space の位相（2R 平面 = T²）を実感</li>
+    <li>□ 計画はワークスペースではなく C-space で行うべき理由</li>
+  </ul>
+
+  <h2>2R アーム C-space</h2>
+  <div>$$ \mathcal{C} = S^1 \times S^1 = \mathbb{T}^2 $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    各関節は S¹（円）。2 つの直積でトーラス（ドーナツ）。<br>
+    画面上は (-π, π) × (-π, π) の正方形に展開（左右、上下が同一視される）。
+  </p>
+
+  <h2>ワークスペース</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    L₁ = L₂ = 1。リンクは線分で表現。<br>
+    クリックで円形障害物を追加 / 削除。
+  </p>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    1. 左パネル（ワークスペース）をクリックで障害物追加<br>
+    2. 右パネル（C-space）クリックで関節姿勢設定<br>
+    3. スライダーで姿勢を変更し対応関係を観察
+  </p>
+
+  <h2>凡例</h2>
+  <div style="font-size:11px;">
+    <div><span style="color:#94A3B8;">━</span> リンク</div>
+    <div><span style="color:#FACC15;">●</span> 関節</div>
+    <div><span style="color:#FB923C;">●</span> エンドエフェクタ</div>
+    <div><span style="color:#DC2626;">●</span> 障害物</div>
+    <div style="margin-top:4px;">C-space:</div>
+    <div><span style="background:rgba(220,38,38,0.65); padding:0 6px;">　</span> C-obstacle</div>
+    <div><span style="background:rgba(34,197,94,0.6); padding:0 6px;">　</span> C-free</div>
+    <div><span style="color:#FB923C;">✕</span> 現在の姿勢</div>
+  </div>
+</div>
+
+<div class="hud glass">
+  <h2>姿勢</h2>
+  <div class="matrix" id="theta-display"></div>
+  <h2>EE 位置</h2>
+  <div class="matrix" id="ee-display"></div>
+  <h2>衝突判定</h2>
+  <div class="matrix" id="coll-display"></div>
+  <h2>C-space 解像度</h2>
+  <div>グリッド: <span id="grid-display">60 × 60</span></div>
+</div>
+
+<div class="panel glass">
+  <div class="panel-section">
+    <div class="panel-title">ワークスペース</div>
+    <p style="font-size:11px; color:#94A3B8;">クリック：障害物追加（既存のものは内部クリックで削除）</p>
+    <label>障害物半径 <span id="r-val">0.20</span></label>
+    <input type="range" id="r" min="0.05" max="0.6" value="0.20" step="0.01">
+  </div>
+  <div class="panel-section">
+    <div class="panel-title">関節角</div>
+    <label>θ₁ <span id="t1-val">30°</span></label>
+    <input type="range" id="t1" min="-180" max="180" value="30" step="1">
+    <label>θ₂ <span id="t2-val">60°</span></label>
+    <input type="range" id="t2" min="-180" max="180" value="60" step="1">
+  </div>
+</div>
+
+<script>
+const L1=1.0, L2=1.0;
+const wsSvg = document.getElementById('ws-svg');
+const csSvg = document.getElementById('cs-svg');
+
+// C-space 離散化
+const CS_N = 60;
+let csGrid = null;  // CS_N x CS_N: 0=free, 1=collision
+
+// 状態
+const state = {
+  t1: 30 * Math.PI/180,
+  t2: 60 * Math.PI/180,
+  obstacles: [],   // {x, y, r}
+  obsRadius: 0.20
+};
+
+// ====== 衝突判定 ======
+function distSegPt(a, b, p){
+  const ax=a[0], ay=a[1], bx=b[0], by=b[1], px=p[0], py=p[1];
+  const dx=bx-ax, dy=by-ay;
+  const len2 = dx*dx+dy*dy;
+  if(len2 < 1e-9) return Math.hypot(px-ax, py-ay);
+  let t = ((px-ax)*dx + (py-ay)*dy)/len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax+t*dx, cy = ay+t*dy;
+  return Math.hypot(px-cx, py-cy);
+}
+
+function checkCollision(t1, t2){
+  const j1 = [0, 0];
+  const j2 = [L1*Math.cos(t1), L1*Math.sin(t1)];
+  const ee = [j2[0] + L2*Math.cos(t1+t2), j2[1] + L2*Math.sin(t1+t2)];
+  for(const o of state.obstacles){
+    if(distSegPt(j1, j2, [o.x, o.y]) < o.r) return true;
+    if(distSegPt(j2, ee, [o.x, o.y]) < o.r) return true;
+  }
+  return false;
+}
+
+function recomputeCS(){
+  csGrid = [];
+  for(let i=0;i<CS_N;i++){
+    csGrid.push([]);
+    const t1 = -Math.PI + (i+0.5)/CS_N * 2*Math.PI;
+    for(let j=0;j<CS_N;j++){
+      const t2 = -Math.PI + (j+0.5)/CS_N * 2*Math.PI;
+      csGrid[i].push(checkCollision(t1, t2) ? 1 : 0);
+    }
+  }
+  drawCS();
+}
+
+// ====== ワークスペース描画 ======
+function getWsRect(){
+  return wsSvg.getBoundingClientRect();
+}
+
+function wsToWorld(px, py){
+  const r = getWsRect();
+  const sz = Math.min(r.width, r.height) - 20;
+  const cx = r.width/2, cy = r.height/2;
+  return [(px - cx) / sz * 4, -(py - cy) / sz * 4];
+}
+function worldToWs(x, y){
+  const r = getWsRect();
+  const sz = Math.min(r.width, r.height) - 20;
+  return [r.width/2 + x/4 * sz, r.height/2 - y/4 * sz];
+}
+
+function drawWS(){
+  while(wsSvg.firstChild) wsSvg.removeChild(wsSvg.firstChild);
+  const r = getWsRect();
+
+  // 背景軸
+  const cx = r.width/2, cy = r.height/2;
+  const sz = Math.min(r.width, r.height) - 20;
+  // 円形リーチ
+  const reach = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  reach.setAttribute('cx', cx); reach.setAttribute('cy', cy);
+  reach.setAttribute('r', (L1+L2)/4 * sz);
+  reach.setAttribute('fill','none'); reach.setAttribute('stroke','#334155');
+  reach.setAttribute('stroke-dasharray','4 3');
+  wsSvg.appendChild(reach);
+
+  // 軸
+  const ax = document.createElementNS('http://www.w3.org/2000/svg','line');
+  ax.setAttribute('x1', 0); ax.setAttribute('y1', cy); ax.setAttribute('x2', r.width); ax.setAttribute('y2', cy);
+  ax.setAttribute('stroke','#1E293B'); wsSvg.appendChild(ax);
+  const ay = document.createElementNS('http://www.w3.org/2000/svg','line');
+  ay.setAttribute('x1', cx); ay.setAttribute('y1', 0); ay.setAttribute('x2', cx); ay.setAttribute('y2', r.height);
+  ay.setAttribute('stroke','#1E293B'); wsSvg.appendChild(ay);
+
+  // タイトル
+  const title = document.createElementNS('http://www.w3.org/2000/svg','text');
+  title.setAttribute('x', 12); title.setAttribute('y', 22);
+  title.setAttribute('fill','#FB923C'); title.setAttribute('font-size','13'); title.setAttribute('font-weight','bold');
+  title.textContent = 'ワークスペース (x, y)';
+  wsSvg.appendChild(title);
+
+  // 障害物
+  for(const o of state.obstacles){
+    const [px, py] = worldToWs(o.x, o.y);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', px); c.setAttribute('cy', py);
+    c.setAttribute('r', o.r/4 * sz);
+    c.setAttribute('fill','rgba(220,38,38,0.7)'); c.setAttribute('stroke','#DC2626'); c.setAttribute('stroke-width','1.5');
+    wsSvg.appendChild(c);
+  }
+
+  // アーム
+  const j1 = [0, 0];
+  const j2 = [L1*Math.cos(state.t1), L1*Math.sin(state.t1)];
+  const ee = [j2[0] + L2*Math.cos(state.t1+state.t2), j2[1] + L2*Math.sin(state.t1+state.t2)];
+  const collision = checkCollision(state.t1, state.t2);
+  const linkColor = collision ? '#EF4444' : '#94A3B8';
+
+  const drawSeg = (a, b, color, w)=>{
+    const [x1,y1] = worldToWs(a[0], a[1]);
+    const [x2,y2] = worldToWs(b[0], b[1]);
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
+    ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
+    ln.setAttribute('stroke', color); ln.setAttribute('stroke-width', w); ln.setAttribute('stroke-linecap','round');
+    wsSvg.appendChild(ln);
+  };
+  drawSeg(j1, j2, linkColor, 6);
+  drawSeg(j2, ee, linkColor, 6);
+
+  const drawJoint = (p, color, r)=>{
+    const [x,y] = worldToWs(p[0], p[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', r);
+    c.setAttribute('fill', color); c.setAttribute('stroke','white'); c.setAttribute('stroke-width','2');
+    wsSvg.appendChild(c);
+  };
+  drawJoint(j1, '#FACC15', 8);
+  drawJoint(j2, '#FACC15', 6);
+  drawJoint(ee, collision ? '#EF4444' : '#FB923C', 7);
+
+  return collision;
+}
+
+// ====== C-space 描画 ======
+function getCsRect(){ return csSvg.getBoundingClientRect(); }
+
+function csToTheta(px, py){
+  const r = getCsRect();
+  const sz = Math.min(r.width, r.height) - 20;
+  const ox = r.width/2 - sz/2, oy = r.height/2 - sz/2;
+  const t1 = ((px - ox) / sz - 0.5) * 2*Math.PI;
+  const t2 = -((py - oy) / sz - 0.5) * 2*Math.PI;
+  return [t1, t2];
+}
+function thetaToCs(t1, t2){
+  const r = getCsRect();
+  const sz = Math.min(r.width, r.height) - 20;
+  const ox = r.width/2 - sz/2, oy = r.height/2 - sz/2;
+  return [ox + (t1/(2*Math.PI) + 0.5)*sz, oy + (-t2/(2*Math.PI) + 0.5)*sz];
+}
+
+function drawCS(){
+  while(csSvg.firstChild) csSvg.removeChild(csSvg.firstChild);
+  const r = getCsRect();
+  const sz = Math.min(r.width, r.height) - 20;
+  const ox = r.width/2 - sz/2, oy = r.height/2 - sz/2;
+
+  // 背景
+  const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bg.setAttribute('x', ox); bg.setAttribute('y', oy);
+  bg.setAttribute('width', sz); bg.setAttribute('height', sz);
+  bg.setAttribute('fill','rgba(34,197,94,0.15)');
+  bg.setAttribute('stroke','#475569');
+  csSvg.appendChild(bg);
+
+  // C-obstacles
+  if(csGrid){
+    const cs = sz / CS_N;
+    for(let i=0;i<CS_N;i++){
+      for(let j=0;j<CS_N;j++){
+        if(csGrid[i][j] === 1){
+          const x = ox + i*cs;
+          const y = oy + (CS_N - 1 - j)*cs;
+          const cell = document.createElementNS('http://www.w3.org/2000/svg','rect');
+          cell.setAttribute('x', x); cell.setAttribute('y', y);
+          cell.setAttribute('width', cs+0.5); cell.setAttribute('height', cs+0.5);
+          cell.setAttribute('fill','rgba(220,38,38,0.6)');
+          csSvg.appendChild(cell);
+        }
+      }
+    }
+  }
+
+  // 軸ラベル
+  const title = document.createElementNS('http://www.w3.org/2000/svg','text');
+  title.setAttribute('x', 12); title.setAttribute('y', 22);
+  title.setAttribute('fill','#FB923C'); title.setAttribute('font-size','13'); title.setAttribute('font-weight','bold');
+  title.textContent = 'C-space (θ₁, θ₂)';
+  csSvg.appendChild(title);
+
+  // 軸
+  const ax = document.createElementNS('http://www.w3.org/2000/svg','line');
+  ax.setAttribute('x1', ox); ax.setAttribute('y1', oy+sz/2); ax.setAttribute('x2', ox+sz); ax.setAttribute('y2', oy+sz/2);
+  ax.setAttribute('stroke','#475569'); ax.setAttribute('stroke-width','1');
+  csSvg.appendChild(ax);
+  const ay = document.createElementNS('http://www.w3.org/2000/svg','line');
+  ay.setAttribute('x1', ox+sz/2); ay.setAttribute('y1', oy); ay.setAttribute('x2', ox+sz/2); ay.setAttribute('y2', oy+sz);
+  ay.setAttribute('stroke','#475569'); ay.setAttribute('stroke-width','1');
+  csSvg.appendChild(ay);
+
+  // 軸ラベル
+  ['(-π, 0)', '(π, 0)'].forEach((lbl, i)=>{
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x', ox + (i===0?-4:sz+4)); t.setAttribute('y', oy+sz/2+4);
+    t.setAttribute('fill','#94A3B8'); t.setAttribute('font-size','9');
+    t.setAttribute('text-anchor', i===0?'end':'start');
+    t.textContent = lbl; csSvg.appendChild(t);
+  });
+
+  // 現在の姿勢
+  const [px, py] = thetaToCs(state.t1, state.t2);
+  const cross = document.createElementNS('http://www.w3.org/2000/svg','g');
+  ['M -8 -8 L 8 8', 'M -8 8 L 8 -8'].forEach(d=>{
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d', `M ${px-8} ${py-8} L ${px+8} ${py+8}`);
+    p.setAttribute('stroke','#FB923C'); p.setAttribute('stroke-width','3');
+    csSvg.appendChild(p);
+  });
+  const p1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  p1.setAttribute('x1', px-8); p1.setAttribute('y1', py-8); p1.setAttribute('x2', px+8); p1.setAttribute('y2', py+8);
+  p1.setAttribute('stroke','#FB923C'); p1.setAttribute('stroke-width','3');
+  csSvg.appendChild(p1);
+  const p2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  p2.setAttribute('x1', px-8); p2.setAttribute('y1', py+8); p2.setAttribute('x2', px+8); p2.setAttribute('y2', py-8);
+  p2.setAttribute('stroke','#FB923C'); p2.setAttribute('stroke-width','3');
+  csSvg.appendChild(p2);
+}
+
+function update(){
+  drawWS();
+  drawCS();
+
+  document.getElementById('theta-display').textContent =
+    `θ₁ = ${(state.t1*180/Math.PI).toFixed(1)}°\nθ₂ = ${(state.t2*180/Math.PI).toFixed(1)}°`;
+  const ee = [L1*Math.cos(state.t1) + L2*Math.cos(state.t1+state.t2),
+              L1*Math.sin(state.t1) + L2*Math.sin(state.t1+state.t2)];
+  document.getElementById('ee-display').textContent =
+    `(${ee[0].toFixed(3)}, ${ee[1].toFixed(3)})`;
+  const coll = checkCollision(state.t1, state.t2);
+  document.getElementById('coll-display').innerHTML =
+    coll ? '<span style="color:#EF4444; font-weight:bold;">⚠ 衝突</span>' : '<span style="color:#22C55E;">✓ 衝突なし</span>';
+}
+
+// ====== 入力 ======
+wsSvg.addEventListener('click', e=>{
+  const r = wsSvg.getBoundingClientRect();
+  const [wx, wy] = wsToWorld(e.clientX - r.left, e.clientY - r.top);
+  // 既存障害物クリック削除
+  for(let i=0;i<state.obstacles.length;i++){
+    const o = state.obstacles[i];
+    if(Math.hypot(o.x-wx, o.y-wy) < o.r){
+      state.obstacles.splice(i, 1);
+      recomputeCS(); update();
+      return;
+    }
+  }
+  state.obstacles.push({x:wx, y:wy, r:state.obsRadius});
+  recomputeCS(); update();
+});
+
+csSvg.addEventListener('click', e=>{
+  const r = csSvg.getBoundingClientRect();
+  const [t1, t2] = csToTheta(e.clientX - r.left, e.clientY - r.top);
+  state.t1 = t1; state.t2 = t2;
+  document.getElementById('t1').value = (t1*180/Math.PI).toFixed(0);
+  document.getElementById('t2').value = (t2*180/Math.PI).toFixed(0);
+  document.getElementById('t1-val').textContent = (t1*180/Math.PI).toFixed(0)+'°';
+  document.getElementById('t2-val').textContent = (t2*180/Math.PI).toFixed(0)+'°';
+  update();
+});
+
+['t1','t2'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value)*Math.PI/180;
+    document.getElementById(id+'-val').textContent = e.target.value+'°';
+    update();
+  });
+});
+document.getElementById('r').addEventListener('input', e=>{
+  state.obsRadius = parseFloat(e.target.value);
+  document.getElementById('r-val').textContent = state.obsRadius.toFixed(2);
+});
+
+function resetObs(){ state.obstacles = []; recomputeCS(); update(); }
+
+function loadDemo(){
+  state.obstacles = [
+    {x:1.2, y:0.3, r:0.3},
+    {x:-0.6, y:1.0, r:0.25},
+    {x:0.5, y:-1.0, r:0.2}
+  ];
+  recomputeCS();
+  update();
+}
+
+window.addEventListener('resize', ()=>{ update(); });
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+  setTimeout(()=>{ recomputeCS(); update(); }, 100);
+});
+
+loadDemo();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.2 C-space Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

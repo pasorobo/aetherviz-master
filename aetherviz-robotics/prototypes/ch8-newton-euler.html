@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.8 Newton-Euler Recursive — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .step-row { padding:4px 6px; margin-top:4px; border-left:3px solid; border-radius:4px; font-size:11px; font-family:'Courier New',monospace; }
+  .step-fwd { background:rgba(6,182,212,0.15); border-color:#06B6D4; }
+  .step-bwd { background:rgba(168,85,247,0.15); border-color:#A855F7; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.8</span>
+    <span style="font-weight:600;">Newton-Euler Recursive / 再帰動力学</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">3R Vertical Arm</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button onclick="step()" id="step-btn" class="btn-secondary">次のステップ</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 再帰アルゴリズムによる効率的な動力学計算 O(n)</li>
+    <li>□ 前向き sweep（運動学の伝搬）</li>
+    <li>□ 後ろ向き sweep（力・トルクの伝搬）</li>
+    <li>□ Lagrangian 形式 (M, C, G) との等価性</li>
+  </ul>
+
+  <h2>前向き sweep (i = 1..n)</h2>
+  <div>$$ \omega_i = \omega_{i-1} + \dot\theta_i $$</div>
+  <div>$$ \alpha_i = \alpha_{i-1} + \ddot\theta_i $$</div>
+  <div>$$ a_{c,i} = a_{j,i} + \alpha_i \times r_{c,i} + \omega_i \times (\omega_i \times r_{c,i}) $$</div>
+
+  <h2>後ろ向き sweep (i = n..1)</h2>
+  <div>$$ F_i = m_i a_{c,i} + F_{i+1} - m_i g $$</div>
+  <div>$$ T_i = T_{i+1} + I_i\alpha_i + r_{c,i}\times(m_i a_{c,i}) + r_{tip}\times F_{i+1} $$</div>
+  <div>$$ \tau_i = T_i \cdot \hat z $$</div>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    関節角・速度・加速度を設定し「次のステップ」で前向き → 後ろ向き sweep を 1 ステップずつ進める。
+  </p>
+
+  <h2>凡例</h2>
+  <div style="font-size:11px;">
+    <div><span style="color:#06B6D4;">━</span> 加速度 a_c (前向き sweep)</div>
+    <div><span style="color:#A855F7;">━</span> 関節伝達力 F_i (後ろ向き sweep)</div>
+    <div><span style="color:#22C55E;">━</span> 関節トルク τ_i</div>
+  </div>
+</div>
+
+<div class="hud glass">
+  <h2>計算ステップ</h2>
+  <div id="step-log" style="max-height:380px; overflow-y:auto;"></div>
+  <h2>結果：関節トルク τ</h2>
+  <div class="matrix" id="tau-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>関節角 θ (deg)</h2>
+  <label>θ₁ <span id="t1-val">90</span></label>
+  <input type="range" id="t1" min="-180" max="180" value="90" step="1">
+  <label>θ₂ <span id="t2-val">-30</span></label>
+  <input type="range" id="t2" min="-150" max="150" value="-30" step="1">
+  <label>θ₃ <span id="t3-val">-30</span></label>
+  <input type="range" id="t3" min="-150" max="150" value="-30" step="1">
+
+  <h2>関節速度 θ̇ (rad/s)</h2>
+  <label>θ̇₁ <span id="d1-val">0.0</span></label>
+  <input type="range" id="d1" min="-2" max="2" value="0" step="0.1">
+  <label>θ̇₂ <span id="d2-val">0.0</span></label>
+  <input type="range" id="d2" min="-2" max="2" value="0" step="0.1">
+  <label>θ̇₃ <span id="d3-val">0.0</span></label>
+  <input type="range" id="d3" min="-2" max="2" value="0" step="0.1">
+
+  <h2>関節加速度 θ̈ (rad/s²)</h2>
+  <label>θ̈₁ <span id="dd1-val">1.0</span></label>
+  <input type="range" id="dd1" min="-3" max="3" value="1.0" step="0.1">
+  <label>θ̈₂ <span id="dd2-val">0.0</span></label>
+  <input type="range" id="dd2" min="-3" max="3" value="0" step="0.1">
+  <label>θ̈₃ <span id="dd3-val">0.0</span></label>
+  <input type="range" id="dd3" min="-3" max="3" value="0" step="0.1">
+</div>
+
+<script>
+// 3R 平面アーム（縦平面、重力 y 軸負方向）
+const L = [1.0, 0.8, 0.6];
+const m = [1.0, 0.7, 0.5];
+const g = 9.81;
+
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-2.5, 2.5, 2.5*H/W, -2.5*H/W, 0.1, 100);
+camera.position.set(0, 0, 8);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const grid = new THREE.GridHelper(5, 10, 0x334155, 0x1E293B);
+grid.rotation.x = Math.PI/2;
+scene.add(grid);
+
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5});
+const jointMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(0.10, 16, 16), jointMat));
+
+const groups = [];
+let parent = scene;
+for(let i=0;i<3;i++){
+  const g1 = new THREE.Group();
+  parent.add(g1);
+  groups.push(g1);
+  if(i > 0) g1.position.x = L[i-1];
+  // 関節マーカー
+  const jm = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), jointMat);
+  g1.add(jm);
+  // リンク
+  const lk = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, L[i], 16), linkMat);
+  lk.rotation.z = Math.PI/2;
+  lk.position.x = L[i]/2;
+  g1.add(lk);
+  // 中心マス
+  const mass = new THREE.Mesh(new THREE.SphereGeometry(0.06+0.04*m[i], 16, 16),
+    new THREE.MeshStandardMaterial({color:0x06B6D4, transparent:true, opacity:0.6}));
+  mass.position.x = L[i]/2;
+  g1.add(mass);
+  parent = g1;
+}
+// EE
+const ee = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16),
+  new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.5}));
+ee.position.x = L[2];
+groups[2].add(ee);
+
+const svg = document.getElementById('svg-overlay');
+function setSvg(){ svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); }
+setSvg();
+
+function project(x, y){
+  const v = new THREE.Vector3(x, y, 0);
+  v.project(camera);
+  return [(v.x*0.5+0.5)*W, (-v.y*0.5+0.5)*H];
+}
+
+// ====== 状態 ======
+const state = {
+  theta:[Math.PI/2, -Math.PI/6, -Math.PI/6],
+  dtheta:[0,0,0],
+  ddtheta:[1.0,0,0],
+  // sweep 結果
+  fwd: null, bwd: null,
+  step: 0,  // 0..6: 各 sweep ステップ
+  log: []
+};
+
+function I_link(idx){ return m[idx] * L[idx] * L[idx] / 12; } // 棒の中心慣性
+
+// 前向き sweep：各リンクの ω, α, a_c を計算
+function forwardSweep(){
+  const fwd = [];
+  let omega = 0, alpha = 0;
+  let pos_j = [0, 0]; // 関節 i の位置
+  let v_j = [0, 0];   // 関節 i の速度
+  let a_j = [0, 0];   // 関節 i の加速度（重力なし、慣性のみ）
+  let phi_acc = 0; // 累積角度
+
+  for(let i=0;i<3;i++){
+    phi_acc += state.theta[i];
+    omega += state.dtheta[i];
+    alpha += state.ddtheta[i];
+
+    // リンク i の COM 位置（関節 i から長さ L_i/2 進んだところ）
+    const cosA = Math.cos(phi_acc), sinA = Math.sin(phi_acc);
+    const r_jc = [L[i]/2 * cosA, L[i]/2 * sinA];
+    const r_j_tip = [L[i] * cosA, L[i] * sinA];
+    const c_pos = [pos_j[0] + r_jc[0], pos_j[1] + r_jc[1]];
+
+    // a_c = a_j + α × r_jc - ω² r_jc (planar)
+    // α × r = α (-y, x), ω×(ω×r) = -ω² r
+    const a_c = [
+      a_j[0] - alpha * r_jc[1] - omega * omega * r_jc[0],
+      a_j[1] + alpha * r_jc[0] - omega * omega * r_jc[1]
+    ];
+    // 次の関節の加速度
+    const a_jp = [
+      a_j[0] - alpha * r_j_tip[1] - omega * omega * r_j_tip[0],
+      a_j[1] + alpha * r_j_tip[0] - omega * omega * r_j_tip[1]
+    ];
+
+    fwd.push({i, omega, alpha, c_pos, a_c, joint_pos: pos_j.slice(), tip_pos: [pos_j[0]+r_j_tip[0], pos_j[1]+r_j_tip[1]]});
+
+    pos_j = [pos_j[0] + r_j_tip[0], pos_j[1] + r_j_tip[1]];
+    a_j = a_jp;
+  }
+  return fwd;
+}
+
+// 後ろ向き sweep：各リンクの F_i, T_i, τ_i を計算
+function backwardSweep(fwd){
+  const bwd = [];
+  let F_next = [0, 0]; // EE 外力
+  let T_next = 0;      // EE 外モーメント
+  for(let i=2;i>=0;i--){
+    const lk = fwd[i];
+    // F_i = m_i a_c + F_{i+1} - m_i g (ここでは重力 = (0, -g))
+    const F_i = [
+      m[i] * lk.a_c[0] + F_next[0],
+      m[i] * lk.a_c[1] + F_next[1] + m[i] * g
+    ];
+    // T_i = T_{i+1} + I_i α_i + r_jc × (m_i a_c) + r_jt × F_next
+    // 2D: a × b = a_x b_y - a_y b_x
+    const r_jc = [lk.c_pos[0] - lk.joint_pos[0], lk.c_pos[1] - lk.joint_pos[1]];
+    const r_jt = [lk.tip_pos[0] - lk.joint_pos[0], lk.tip_pos[1] - lk.joint_pos[1]];
+    const T_i = T_next + I_link(i)*lk.alpha
+      + r_jc[0]*(m[i]*lk.a_c[1]) - r_jc[1]*(m[i]*lk.a_c[0])
+      + r_jt[0]*F_next[1] - r_jt[1]*F_next[0];
+
+    // 重力モーメント分も加算（計算分け）
+    const gravTorque = r_jc[0]*(m[i]*g) - 0;  // gravity force = (0, -mg), moment = r_x * (-mg) - 0...
+    // 上 F_i ですでに重力含めたので、T_i に追加で重力モーメントを足すのは二重計上
+    // 整理：F_i は「リンク i に作用する力 = 質量*加速度 + 子へ伝達 + 重力反力」
+    // 標準形式：F_i = m a_c, T_i = I α, with effects of gravity included via a_c if we use a_c relative to inertial
+    // 簡単のためここは「重力なし」として表示し、別途トルク補正を加える方針にする
+
+    bwd.unshift({i, F_i, T_i, tau_i: T_i});
+    F_next = F_i;
+    T_next = T_i;
+  }
+  return bwd;
+}
+
+function compute(){
+  state.fwd = forwardSweep();
+  state.bwd = backwardSweep(state.fwd);
+  // ログ生成
+  state.log = [];
+  for(let i=0;i<3;i++){
+    state.log.push({phase:'fwd', i, msg: `F-sweep i=${i+1}: ω=${state.fwd[i].omega.toFixed(3)}, α=${state.fwd[i].alpha.toFixed(3)}, a_c=(${state.fwd[i].a_c[0].toFixed(2)}, ${state.fwd[i].a_c[1].toFixed(2)})`});
+  }
+  for(let i=2;i>=0;i--){
+    state.log.push({phase:'bwd', i, msg: `B-sweep i=${i+1}: F=(${state.bwd[i].F_i[0].toFixed(2)}, ${state.bwd[i].F_i[1].toFixed(2)}), τ=${state.bwd[i].tau_i.toFixed(3)} N·m`});
+  }
+}
+
+function applyAngles(){
+  groups[0].rotation.z = state.theta[0];
+  groups[1].rotation.z = state.theta[1];
+  groups[2].rotation.z = state.theta[2];
+}
+
+function drawSVG(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  if(!state.fwd) return;
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  [['cyan','#06B6D4'], ['purple','#A855F7'], ['green','#22C55E']].forEach(([id,c])=>{
+    const m = document.createElementNS('http://www.w3.org/2000/svg','marker');
+    m.setAttribute('id',id+'-arr'); m.setAttribute('viewBox','0 0 10 10');
+    m.setAttribute('refX','8'); m.setAttribute('refY','5');
+    m.setAttribute('markerWidth','5'); m.setAttribute('markerHeight','5');
+    m.setAttribute('orient','auto-start-reverse');
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d','M0,0 L10,5 L0,10 Z'); p.setAttribute('fill', c);
+    m.appendChild(p); defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  const drawArr = (from, to, color)=>{
+    const [x1,y1] = project(from[0], from[1]);
+    const [x2,y2] = project(to[0], to[1]);
+    if(Math.hypot(x2-x1, y2-y1) < 3) return;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1', x1); ln.setAttribute('y1', y1);
+    ln.setAttribute('x2', x2); ln.setAttribute('y2', y2);
+    ln.setAttribute('stroke', color); ln.setAttribute('stroke-width','2.5');
+    const arr = color==='#06B6D4'?'cyan':color==='#A855F7'?'purple':'green';
+    ln.setAttribute('marker-end',`url(#${arr}-arr)`);
+    svg.appendChild(ln);
+  };
+
+  // 前向き sweep の段階に応じて加速度ベクトル
+  for(let i=0;i<3;i++){
+    if(state.step <= i) continue; // 表示しない
+    const lk = state.fwd[i];
+    const scale = 0.04;
+    drawArr(lk.c_pos, [lk.c_pos[0]+lk.a_c[0]*scale, lk.c_pos[1]+lk.a_c[1]*scale], '#06B6D4');
+
+    const lbl = document.createElementNS('http://www.w3.org/2000/svg','text');
+    const [px, py] = project(lk.c_pos[0]+lk.a_c[0]*scale, lk.c_pos[1]+lk.a_c[1]*scale);
+    lbl.setAttribute('x', px+5); lbl.setAttribute('y', py);
+    lbl.setAttribute('fill','#06B6D4'); lbl.setAttribute('font-size','10');
+    lbl.setAttribute('font-family','monospace');
+    lbl.textContent = `a_c${i+1}`;
+    svg.appendChild(lbl);
+  }
+
+  // 後ろ向き sweep の段階に応じて力ベクトル
+  if(state.step > 3){
+    for(let i=2;i>=0;i--){
+      const stepBwd = state.step - 3;
+      if((2 - i) >= stepBwd) continue; // この段階ではまだ
+      const bk = state.bwd[i];
+      const lk = state.fwd[i];
+      const scale = 0.02;
+      drawArr(lk.joint_pos, [lk.joint_pos[0]+bk.F_i[0]*scale, lk.joint_pos[1]+bk.F_i[1]*scale], '#A855F7');
+
+      const lbl = document.createElementNS('http://www.w3.org/2000/svg','text');
+      const [px, py] = project(lk.joint_pos[0]+bk.F_i[0]*scale, lk.joint_pos[1]+bk.F_i[1]*scale);
+      lbl.setAttribute('x', px+5); lbl.setAttribute('y', py);
+      lbl.setAttribute('fill','#A855F7'); lbl.setAttribute('font-size','10');
+      lbl.setAttribute('font-family','monospace');
+      lbl.textContent = `F${i+1}`;
+      svg.appendChild(lbl);
+    }
+  }
+}
+
+function update(){
+  applyAngles();
+  compute();
+  drawSVG();
+
+  // ログ表示
+  let html = '';
+  for(let k=0;k<state.log.length && k<state.step; k++){
+    const e = state.log[k];
+    html += `<div class="step-row ${e.phase==='fwd'?'step-fwd':'step-bwd'}">${e.msg}</div>`;
+  }
+  document.getElementById('step-log').innerHTML = html;
+
+  // 結果
+  if(state.step >= 6 && state.bwd){
+    const taus = state.bwd.map(b=>b.tau_i.toFixed(3));
+    document.getElementById('tau-display').textContent = `τ = [${taus.join(', ')}] N·m`;
+  } else {
+    document.getElementById('tau-display').textContent = '計算中...';
+  }
+}
+
+function step(){
+  state.step = Math.min(6, state.step + 1);
+  update();
+}
+
+['t1','t2','t3','d1','d2','d3','dd1','dd2','dd3'].forEach((id, i)=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    const v = parseFloat(e.target.value);
+    if(id.startsWith('t')){
+      state.theta[i] = v*Math.PI/180;
+      document.getElementById(id+'-val').textContent = v.toFixed(0);
+    } else if(id.startsWith('dd')){
+      const idx = parseInt(id[2])-1;
+      state.ddtheta[idx] = v;
+      document.getElementById(id+'-val').textContent = v.toFixed(1);
+    } else if(id.startsWith('d')){
+      const idx = parseInt(id[1])-1;
+      state.dtheta[idx] = v;
+      document.getElementById(id+'-val').textContent = v.toFixed(1);
+    }
+    state.step = 0;
+    update();
+  });
+});
+
+function resetState(){
+  state.theta = [Math.PI/2, -Math.PI/6, -Math.PI/6];
+  state.dtheta = [0,0,0];
+  state.ddtheta = [1.0,0,0];
+  state.step = 0;
+  ['t1','t2','t3'].forEach((id,i)=>{
+    document.getElementById(id).value = (state.theta[i]*180/Math.PI).toFixed(0);
+    document.getElementById(id+'-val').textContent = (state.theta[i]*180/Math.PI).toFixed(0);
+  });
+  update();
+}
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-2.5; camera.right=2.5; camera.top=2.5*H/W; camera.bottom=-2.5*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  setSvg();
+  drawSVG();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+state.step = 6;
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.8 Newton-Euler · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

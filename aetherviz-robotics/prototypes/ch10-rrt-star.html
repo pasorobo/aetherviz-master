@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.10 RRT* — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .matrix { background:rgba(0,0,0,0.4); padding:6px; border-radius:6px; font-family:'Courier New',monospace; font-size:11px; }
+  .mode-btn { background:rgba(255,255,255,0.08); padding:4px 8px; }
+  .mode-btn.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.10</span>
+    <span style="font-weight:600;">RRT\* / 漸近最適計画</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Asymptotic Optimality via Rewiring</span>
+  </div>
+  <div>
+    <button onclick="resetWorld()">世界リセット</button>
+    <button onclick="resetTree()" class="btn-secondary">木のみリセット</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ RRT との違い：近傍探索 + コスト最適化を理解</li>
+    <li>□ ノードのコスト（root からの累積距離）を追跡</li>
+    <li>□ リワイヤリング（rewiring）操作を観察</li>
+    <li>□ 反復回数増 → パス品質向上を確認</li>
+  </ul>
+
+  <h2>RRT\* 主要ステップ</h2>
+  <div class="matrix" style="font-size:10px;">
+1. q_rand ← sample
+2. q_near ← nearest(q_rand)
+3. q_new  ← steer(q_near, q_rand, ε)
+4. if collision_free:
+5.   N ← neighbors(q_new, r)
+6.   <span style="color:#22D3EE">choose_parent: 最小コスト親</span>
+7.   add q_new to T
+8.   <span style="color:#A855F7">rewire: 近傍ノードの親を q_new に張替えてコスト改善</span>
+</div>
+
+  <h2>近傍半径</h2>
+  <div>$$ r(n) = \min(\gamma_{\mathrm{rrt*}} \left(\frac{\log n}{n}\right)^{1/d}, \varepsilon) $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">理論的には n→∞ で漸近最適。実装簡略化のため固定半径を使用可。</p>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    モード選択 → クリックで start / goal / 障害物。<br>
+    「計画実行」で反復、リワイヤされたエッジは紫で強調。
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>状態</h2>
+  <div>start: <span id="start-readout">未設定</span></div>
+  <div>goal:  <span id="goal-readout">未設定</span></div>
+  <div>反復: <span id="iter-count">0</span></div>
+  <div>ノード数: <span id="node-count">0</span></div>
+  <div>リワイヤ回数: <span id="rewire-count">0</span></div>
+  <div>最良パスコスト: <span id="best-cost">-</span></div>
+  <div>状態: <span id="status">待機</span></div>
+</div>
+
+<div class="panel glass">
+  <h2>編集モード</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="mode-btn active" data-mode="start" onclick="setMode('start')">start</button>
+    <button class="mode-btn" data-mode="goal" onclick="setMode('goal')">goal</button>
+    <button class="mode-btn" data-mode="obstacle" onclick="setMode('obstacle')">障害物</button>
+  </div>
+
+  <h2>パラメータ</h2>
+  <label>step ε <span id="eps-val">0.4</span></label>
+  <input type="range" id="eps" min="0.1" max="1.0" value="0.4" step="0.05">
+  <label>近傍半径 r <span id="rn-val">0.8</span></label>
+  <input type="range" id="rn" min="0.2" max="2.0" value="0.8" step="0.05">
+  <label>goal bias <span id="pgoal-val">0.10</span></label>
+  <input type="range" id="pgoal" min="0" max="0.5" value="0.10" step="0.01">
+  <label>反復回数 <span id="iter-target-val">3000</span></label>
+  <input type="range" id="iter-target" min="200" max="20000" value="3000" step="100">
+
+  <h2>実行</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="run(true)" class="btn-success">計画 (一気に)</button>
+    <button onclick="run(false)" class="btn-secondary">アニメ</button>
+    <button onclick="loadDemo()" class="btn-secondary">デモ</button>
+  </div>
+</div>
+
+<script>
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const WX=5, WY=5*H/W;
+const camera = new THREE.OrthographicCamera(-WX, WX, WY, -WY, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+scene.add(new THREE.GridHelper(20, 40, 0x334155, 0x1E293B));
+
+const obstacleGroup = new THREE.Group();
+scene.add(obstacleGroup);
+function rebuildObstacles(){
+  while(obstacleGroup.children.length) obstacleGroup.remove(obstacleGroup.children[0]);
+  for(const o of state.obstacles){
+    const g = new THREE.PlaneGeometry(o.w, o.h);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({color:0xDC2626, transparent:true, opacity:0.5, side:THREE.DoubleSide}));
+    m.position.set(o.cx, o.cy, 0);
+    obstacleGroup.add(m);
+  }
+}
+
+const svg = document.getElementById('svg-overlay');
+function setSvgSize(){ svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); }
+setSvgSize();
+
+function pxToWorld(px, py){
+  const ndcX = (px/W)*2 - 1;
+  const ndcY = -((py/H)*2 - 1);
+  return [ndcX * WX, ndcY * WY];
+}
+function worldToPx(wx, wy){
+  return [(wx/WX*0.5 + 0.5)*W, (-wy/WY*0.5 + 0.5)*H];
+}
+
+const state = {
+  mode:'start',
+  start:null, goal:null,
+  obstacles:[],
+  tree:[],   // {q, parent, cost}
+  iter:0, rewires:0,
+  bestPath:null, bestCost:Infinity,
+  eps:0.4, rn:0.8, pgoal:0.10, iterTarget:3000,
+  recentlyRewired: new Set()
+};
+
+function dist(a,b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function pointInObstacle(p){
+  for(const o of state.obstacles){
+    if(p[0] >= o.cx-o.w/2 && p[0] <= o.cx+o.w/2 &&
+       p[1] >= o.cy-o.h/2 && p[1] <= o.cy+o.h/2) return true;
+  }
+  return false;
+}
+function segmentCollides(p1, p2){
+  const dx=p2[0]-p1[0], dy=p2[1]-p1[1];
+  const len = Math.hypot(dx, dy);
+  const n = Math.max(2, Math.ceil(len/0.05));
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    if(pointInObstacle([p1[0]+t*dx, p1[1]+t*dy])) return true;
+  }
+  return false;
+}
+
+function nearestIdx(q){
+  let best=0, bd=Infinity;
+  for(let i=0;i<state.tree.length;i++){
+    const d = dist(state.tree[i].q, q);
+    if(d<bd){ bd=d; best=i; }
+  }
+  return best;
+}
+function neighbors(q, r){
+  const out = [];
+  for(let i=0;i<state.tree.length;i++){
+    if(dist(state.tree[i].q, q) < r) out.push(i);
+  }
+  return out;
+}
+function steer(qFrom, qTo, eps){
+  const dx=qTo[0]-qFrom[0], dy=qTo[1]-qFrom[1];
+  const d = Math.hypot(dx, dy);
+  if(d <= eps) return qTo.slice();
+  return [qFrom[0]+dx/d*eps, qFrom[1]+dy/d*eps];
+}
+
+function rrtStarStep(){
+  if(!state.start || !state.goal) return false;
+  if(state.tree.length === 0){
+    state.tree.push({q:state.start.slice(), parent:-1, cost:0});
+  }
+
+  const qrand = Math.random() < state.pgoal ? state.goal.slice() : [(Math.random()*2-1)*WX, (Math.random()*2-1)*WY];
+  const ni = nearestIdx(qrand);
+  const qnew = steer(state.tree[ni].q, qrand, state.eps);
+  if(pointInObstacle(qnew) || segmentCollides(state.tree[ni].q, qnew)){
+    state.iter++;
+    return false;
+  }
+
+  // choose parent
+  const N = neighbors(qnew, state.rn);
+  let bestParent = ni;
+  let bestCost = state.tree[ni].cost + dist(state.tree[ni].q, qnew);
+  for(const j of N){
+    if(segmentCollides(state.tree[j].q, qnew)) continue;
+    const c = state.tree[j].cost + dist(state.tree[j].q, qnew);
+    if(c < bestCost){ bestCost = c; bestParent = j; }
+  }
+
+  const newIdx = state.tree.length;
+  state.tree.push({q:qnew, parent:bestParent, cost:bestCost});
+  state.iter++;
+
+  // rewire
+  state.recentlyRewired = new Set();
+  for(const j of N){
+    if(j === bestParent) continue;
+    if(segmentCollides(state.tree[j].q, qnew)) continue;
+    const c = bestCost + dist(qnew, state.tree[j].q);
+    if(c < state.tree[j].cost){
+      state.tree[j].parent = newIdx;
+      const old = state.tree[j].cost;
+      state.tree[j].cost = c;
+      state.recentlyRewired.add(j);
+      state.rewires++;
+      // 子孫のコスト更新（簡略：親変更のみ。完全な伝搬は省略）
+    }
+  }
+
+  // ゴール到達判定
+  if(dist(qnew, state.goal) < state.eps && !segmentCollides(qnew, state.goal)){
+    const goalCost = bestCost + dist(qnew, state.goal);
+    if(goalCost < state.bestCost){
+      // ゴールへ接続
+      state.tree.push({q:state.goal.slice(), parent:newIdx, cost:goalCost});
+      const path = [];
+      let i = state.tree.length-1;
+      while(i !== -1){ path.push(state.tree[i].q); i = state.tree[i].parent; }
+      path.reverse();
+      state.bestPath = path;
+      state.bestCost = goalCost;
+      return true;
+    }
+  }
+  return false;
+}
+
+function run(immediate){
+  if(!state.start || !state.goal){ alert('start と goal を設定してください'); return; }
+  if(immediate){
+    state.status = '実行中...';
+    const t0 = performance.now();
+    while(state.iter < state.iterTarget) rrtStarStep();
+    state.status = `完了 (${state.iter}回, ${(performance.now()-t0).toFixed(0)}ms)`;
+    drawTree(); updateHUD();
+  } else {
+    state.status = 'アニメ中';
+    const tick = ()=>{
+      for(let k=0;k<10;k++){
+        if(state.iter >= state.iterTarget) break;
+        rrtStarStep();
+      }
+      drawTree(); updateHUD();
+      if(state.iter < state.iterTarget) requestAnimationFrame(tick);
+      else { state.status = `完了 (${state.iter}回)`; updateHUD(); }
+    };
+    tick();
+  }
+}
+
+function drawTree(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // エッジ
+  for(let i=1;i<state.tree.length;i++){
+    const node = state.tree[i];
+    if(node.parent < 0) continue;
+    const p = state.tree[node.parent];
+    const [x1,y1] = worldToPx(p.q[0], p.q[1]);
+    const [x2,y2] = worldToPx(node.q[0], node.q[1]);
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',x1); ln.setAttribute('y1',y1);
+    ln.setAttribute('x2',x2); ln.setAttribute('y2',y2);
+    if(state.recentlyRewired.has(i)){
+      ln.setAttribute('stroke','#A855F7'); ln.setAttribute('stroke-width','2');
+    } else {
+      ln.setAttribute('stroke','#06B6D4'); ln.setAttribute('stroke-width','1');
+      ln.setAttribute('opacity','0.55');
+    }
+    svg.appendChild(ln);
+  }
+
+  // ノード
+  for(const node of state.tree){
+    const [x,y] = worldToPx(node.q[0], node.q[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','1.5');
+    c.setAttribute('fill','#22D3EE');
+    svg.appendChild(c);
+  }
+
+  // 最良パス
+  if(state.bestPath){
+    const pts = state.bestPath.map(p=>worldToPx(p[0], p[1]));
+    const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    pl.setAttribute('points', pts.map(p=>p[0]+','+p[1]).join(' '));
+    pl.setAttribute('stroke','#FBBF24'); pl.setAttribute('stroke-width','3');
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke-linejoin','round');
+    svg.appendChild(pl);
+  }
+
+  // start / goal
+  if(state.start){
+    const [x,y] = worldToPx(state.start[0], state.start[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','9');
+    c.setAttribute('fill','#22C55E'); c.setAttribute('stroke','white'); c.setAttribute('stroke-width','2');
+    svg.appendChild(c);
+  }
+  if(state.goal){
+    const [x,y] = worldToPx(state.goal[0], state.goal[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','9');
+    c.setAttribute('fill','#EF4444'); c.setAttribute('stroke','white'); c.setAttribute('stroke-width','2');
+    svg.appendChild(c);
+  }
+}
+
+function updateHUD(){
+  document.getElementById('start-readout').textContent = state.start ? `(${state.start[0].toFixed(2)}, ${state.start[1].toFixed(2)})` : '未設定';
+  document.getElementById('goal-readout').textContent = state.goal ? `(${state.goal[0].toFixed(2)}, ${state.goal[1].toFixed(2)})` : '未設定';
+  document.getElementById('iter-count').textContent = state.iter;
+  document.getElementById('node-count').textContent = state.tree.length;
+  document.getElementById('rewire-count').textContent = state.rewires;
+  document.getElementById('best-cost').textContent = isFinite(state.bestCost) ? state.bestCost.toFixed(3) : '-';
+  document.getElementById('status').textContent = state.status || '待機';
+}
+
+// ====== 入力 ======
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active', b.dataset.mode === m));
+}
+
+let dragStart=null, dragRect=null;
+renderer.domElement.addEventListener('mousedown', e=>{
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px=e.clientX-rect.left, py=e.clientY-rect.top;
+  const [wx,wy] = pxToWorld(px, py);
+  if(state.mode === 'start'){ state.start = [wx,wy]; resetTree(); }
+  else if(state.mode === 'goal'){ state.goal = [wx,wy]; resetTree(); }
+  else if(state.mode === 'obstacle'){ dragStart = [wx,wy]; }
+  drawTree(); updateHUD();
+});
+renderer.domElement.addEventListener('mousemove', e=>{
+  if(state.mode !== 'obstacle' || !dragStart) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px=e.clientX-rect.left, py=e.clientY-rect.top;
+  const [wx,wy] = pxToWorld(px, py);
+  const [x1,y1] = worldToPx(dragStart[0], dragStart[1]);
+  const [x2,y2] = worldToPx(wx, wy);
+  if(dragRect) svg.removeChild(dragRect);
+  dragRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  dragRect.setAttribute('x', Math.min(x1,x2)); dragRect.setAttribute('y', Math.min(y1,y2));
+  dragRect.setAttribute('width', Math.abs(x2-x1)); dragRect.setAttribute('height', Math.abs(y2-y1));
+  dragRect.setAttribute('fill','rgba(220,38,38,0.4)'); dragRect.setAttribute('stroke','#DC2626');
+  svg.appendChild(dragRect);
+});
+renderer.domElement.addEventListener('mouseup', e=>{
+  if(state.mode !== 'obstacle' || !dragStart) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px=e.clientX-rect.left, py=e.clientY-rect.top;
+  const [wx,wy] = pxToWorld(px, py);
+  const cx=(dragStart[0]+wx)/2, cy=(dragStart[1]+wy)/2;
+  const w=Math.abs(wx-dragStart[0]), h=Math.abs(wy-dragStart[1]);
+  if(w>0.05 && h>0.05){ state.obstacles.push({cx,cy,w,h}); rebuildObstacles(); }
+  if(dragRect){ svg.removeChild(dragRect); dragRect=null; }
+  dragStart=null;
+  drawTree(); updateHUD();
+});
+
+['eps','rn','pgoal','iter-target'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    const k = id==='iter-target' ? 'iterTarget' : (id==='rn' ? 'rn' : id);
+    state[k] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[k].toFixed(id==='iter-target'?0:2);
+  });
+});
+
+function resetTree(){
+  state.tree = []; state.iter = 0; state.rewires = 0;
+  state.bestPath = null; state.bestCost = Infinity;
+  state.recentlyRewired = new Set();
+  state.status = '待機';
+  drawTree(); updateHUD();
+}
+function resetWorld(){
+  state.start = null; state.goal = null; state.obstacles = [];
+  resetTree(); rebuildObstacles();
+  drawTree(); updateHUD();
+}
+function loadDemo(){
+  state.start = [-3.5, -1.5]; state.goal = [3.5, 1.5];
+  state.obstacles = [
+    {cx:-1.5, cy:0.5, w:1.2, h:2.0},
+    {cx:0,   cy:-1.5, w:2.5, h:0.8},
+    {cx:1.8, cy:1.2, w:1.0, h:1.5}
+  ];
+  resetTree(); rebuildObstacles();
+  drawTree(); updateHUD();
+}
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  const NWY = WX*H/W;
+  camera.left=-WX; camera.right=WX; camera.top=NWY; camera.bottom=-NWY;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  setSvgSize(); drawTree();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+loadDemo();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.10 RRT* Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>
