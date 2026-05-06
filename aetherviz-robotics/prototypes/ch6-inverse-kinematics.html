@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.6 Inverse Kinematics — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; cursor:crosshair; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:360px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .hint { color:#FBBF24; font-size:11px; margin-top:6px; }
+  .progress { height:6px; background:#334155; border-radius:3px; overflow:hidden; margin-top:6px; }
+  .progress > div { height:100%; background:linear-gradient(90deg,#10B981,#14B8A6); transition:width 0.2s; }
+  .iter-log { font-family:'Courier New',monospace; font-size:10px; background:rgba(0,0,0,0.4); padding:6px; border-radius:4px; max-height:120px; overflow-y:auto; margin-top:4px; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.6</span>
+    <span style="font-weight:600;">Inverse Kinematics / 逆運動学</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Newton-Raphson Numerical IK</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 解析解 (closed-form) と数値解 (Newton-Raphson) の違いを学ぶ</li>
+    <li>□ 反復毎のヤコビアン更新を理解する</li>
+    <li>□ 解の不存在・複数解（elbow up/down）を識別する</li>
+  </ul>
+
+  <h2>Newton-Raphson 反復</h2>
+  <div>$$ \theta_{k+1} = \theta_k + J^{-1}(\theta_k)\,(p_{\text{target}} - p_k) $$</div>
+  <div>$$ p_k = f(\theta_k) \quad (\text{順運動学}) $$</div>
+
+  <h2>2R 解析解 (参考)</h2>
+  <div>$$ \cos\theta_2 = \frac{x^2 + y^2 - L_1^2 - L_2^2}{2 L_1 L_2} $$</div>
+  <div>$$ \theta_1 = \mathrm{atan2}(y,x) - \mathrm{atan2}(L_2 s_2, L_1 + L_2 c_2) $$</div>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    1. キャンバス上で <strong>クリック</strong> して目標位置を設定<br>
+    2. 「1 ステップ進む」で Newton-Raphson 反復を 1 回実行<br>
+    3. 「自動収束」で残差 &lt; ε まで自動反復
+  </p>
+  <p class="hint">⚠ 到達不能な点（半径 &gt; L1+L2）では収束しません</p>
+</div>
+
+<div class="hud glass">
+  <h2>反復状態</h2>
+  <div>反復回数: <span id="iter-count">0</span></div>
+  <div>残差 ‖e‖ = <span id="err-norm">0.000</span></div>
+  <div class="progress"><div id="progress-bar" style="width:0%"></div></div>
+
+  <div style="margin-top:8px;">現在 θ:</div>
+  <div class="matrix" id="theta-display"></div>
+
+  <div style="margin-top:8px;">現在の p:</div>
+  <div class="matrix" id="p-display"></div>
+
+  <div style="margin-top:8px;">目標 p_target:</div>
+  <div class="matrix" id="target-display">未設定</div>
+
+  <div style="margin-top:8px;">反復履歴:</div>
+  <div class="iter-log" id="iter-log"></div>
+</div>
+
+<div class="panel glass">
+  <h2>制御</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="stepIK()" class="btn-success">1 ステップ進む</button>
+    <button onclick="autoConverge()">自動収束</button>
+    <button class="btn-secondary" onclick="resetIteration()">反復リセット</button>
+  </div>
+
+  <h2>初期姿勢</h2>
+  <button class="btn-secondary" onclick="setInit(45, 30)">θ=(45°, 30°)</button>
+  <button class="btn-secondary" onclick="setInit(0, 90)">θ=(0°, 90°)</button>
+  <button class="btn-secondary" onclick="setInit(90, -45)">θ=(90°,-45°)</button>
+
+  <h2>解析解との比較</h2>
+  <div style="font-size:11px; margin-top:4px;">elbow-up: <span id="analytic-up">-</span></div>
+  <div style="font-size:11px;">elbow-down: <span id="analytic-down">-</span></div>
+</div>
+
+<script>
+const L1=1.5, L2=1.2;
+
+// ====== Three.js (top-down ortho) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-3, 3, 3*H/W, -3*H/W, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.8));
+const dir = new THREE.DirectionalLight(0xffffff, 0.7); dir.position.set(2,8,3);
+scene.add(dir);
+scene.add(new THREE.GridHelper(8, 16, 0x334155, 0x1E293B));
+
+// 到達円（max reach）
+const reachGeom = new THREE.RingGeometry(L1+L2-0.01, L1+L2+0.01, 64);
+const reachMat = new THREE.MeshBasicMaterial({color:0xFBBF24, transparent:true, opacity:0.4, side:THREE.DoubleSide});
+const reachRing = new THREE.Mesh(reachGeom, reachMat);
+reachRing.rotation.x = -Math.PI/2;
+reachRing.position.y = 0.02;
+scene.add(reachRing);
+
+// 内側到達不可円（|L1-L2|）
+const innerGeom = new THREE.RingGeometry(Math.abs(L1-L2)-0.01, Math.abs(L1-L2)+0.01, 64);
+const innerRing = new THREE.Mesh(innerGeom, reachMat);
+innerRing.rotation.x = -Math.PI/2;
+innerRing.position.y = 0.02;
+scene.add(innerRing);
+
+// ====== 2R アーム ======
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5, roughness:0.4});
+const jointMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+const j1Marker = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), jointMat);
+j1Marker.position.y = 0.05;
+scene.add(j1Marker);
+
+const link1Group = new THREE.Group(); scene.add(link1Group);
+const link1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, L1, 16), linkMat);
+link1.rotation.z = Math.PI/2; link1.position.x = L1/2; link1.position.y = 0.05;
+link1Group.add(link1);
+
+const link2Group = new THREE.Group();
+link2Group.position.x = L1; link2Group.position.y = 0.05;
+link1Group.add(link2Group);
+const j2Marker = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), jointMat);
+link2Group.add(j2Marker);
+const link2 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, L2, 16), linkMat);
+link2.rotation.z = Math.PI/2; link2.position.x = L2/2;
+link2Group.add(link2);
+const eeMat = new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.5});
+const ee = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), eeMat);
+ee.position.x = L2;
+link2Group.add(ee);
+
+// 目標マーカー
+const targetMat = new THREE.MeshBasicMaterial({color:0x10B981});
+const targetMarker = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.14, 24), targetMat);
+targetMarker.rotation.x = -Math.PI/2;
+targetMarker.position.y = 0.04;
+targetMarker.visible = false;
+scene.add(targetMarker);
+
+// 軌跡履歴
+let trailGroup = new THREE.Group();
+scene.add(trailGroup);
+
+function applyJointAngles(t1, t2){
+  link1Group.rotation.y = -t1;
+  link2Group.rotation.y = -t2;
+}
+
+// ====== SVG オーバーレイ (誤差ベクトル) ======
+const svg = document.getElementById('svg-overlay');
+function setSvgSize(){
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+}
+setSvgSize();
+
+function project(x,z){
+  const v = new THREE.Vector3(x, 0, z);
+  v.project(camera);
+  return [(v.x*0.5+0.5)*W, (-v.y*0.5+0.5)*H];
+}
+
+function drawErrorVector(p, target){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  if(!target) return;
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  const m = document.createElementNS('http://www.w3.org/2000/svg','marker');
+  m.setAttribute('id','err-arrow');
+  m.setAttribute('viewBox','0 0 10 10');
+  m.setAttribute('refX','8'); m.setAttribute('refY','5');
+  m.setAttribute('markerWidth','6'); m.setAttribute('markerHeight','6');
+  m.setAttribute('orient','auto-start-reverse');
+  const ap = document.createElementNS('http://www.w3.org/2000/svg','path');
+  ap.setAttribute('d','M0,0 L10,5 L0,10 Z'); ap.setAttribute('fill','#10B981');
+  m.appendChild(ap); defs.appendChild(m);
+  svg.appendChild(defs);
+
+  const [px, py] = project(p.x, p.z);
+  const [tx, ty] = project(target.x, target.z);
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+  line.setAttribute('x1', px); line.setAttribute('y1', py);
+  line.setAttribute('x2', tx); line.setAttribute('y2', ty);
+  line.setAttribute('stroke','#10B981');
+  line.setAttribute('stroke-width','2.5');
+  line.setAttribute('stroke-dasharray','5 4');
+  line.setAttribute('marker-end','url(#err-arrow)');
+  svg.appendChild(line);
+
+  const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+  const mx = (px+tx)/2, my = (py+ty)/2;
+  txt.setAttribute('x', mx+8); txt.setAttribute('y', my);
+  txt.setAttribute('fill','#10B981'); txt.setAttribute('font-size','12');
+  txt.setAttribute('font-family','monospace');
+  const dx = target.x - p.x, dz = target.z - p.z;
+  const errNorm = Math.hypot(dx, dz);
+  txt.textContent = `e=(${dx.toFixed(2)}, ${dz.toFixed(2)}), |e|=${errNorm.toFixed(3)}`;
+  svg.appendChild(txt);
+}
+
+// ====== 数値 IK 状態 ======
+const ikState = {
+  theta: [Math.PI/4, Math.PI/6], // 初期 (45°, 30°)
+  target: null,
+  iterCount: 0,
+  log: [],
+  trail: []
+};
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+
+// 順運動学（ヤコビアンで使う p）
+function fk(theta){
+  const t1=theta[0], t2=theta[1];
+  return {
+    x: L1*Math.cos(t1) + L2*Math.cos(t1+t2),
+    z: -(L1*Math.sin(t1) + L2*Math.sin(t1+t2))  // top-down 描画整合のため z 反転
+  };
+}
+
+// ヤコビアン (∂(x,z)/∂(t1,t2))
+function jacobian(theta){
+  const t1=theta[0], t2=theta[1];
+  return [
+    [-L1*Math.sin(t1) - L2*Math.sin(t1+t2), -L2*Math.sin(t1+t2)],
+    [-(L1*Math.cos(t1) + L2*Math.cos(t1+t2)), -L2*Math.cos(t1+t2)]
+  ];
+}
+
+// 2x2 逆行列
+function inv2(J){
+  const det = J[0][0]*J[1][1] - J[0][1]*J[1][0];
+  if(Math.abs(det) < 1e-9) return null;
+  return [
+    [ J[1][1]/det, -J[0][1]/det],
+    [-J[1][0]/det,  J[0][0]/det]
+  ];
+}
+
+function applyState(){
+  applyJointAngles(ikState.theta[0], ikState.theta[1]);
+  const p = fk(ikState.theta);
+
+  document.getElementById('theta-display').innerText =
+    `θ₁ = ${(ikState.theta[0]*180/Math.PI).toFixed(2)}°\nθ₂ = ${(ikState.theta[1]*180/Math.PI).toFixed(2)}°`;
+  document.getElementById('p-display').innerText =
+    `[${fmt(p.x)} ${fmt(p.z)}]`;
+
+  if(ikState.target){
+    const dx = ikState.target.x - p.x, dz = ikState.target.z - p.z;
+    const errNorm = Math.hypot(dx, dz);
+    document.getElementById('err-norm').textContent = errNorm.toFixed(4);
+    document.getElementById('progress-bar').style.width =
+      Math.max(0, Math.min(100, (1 - errNorm/2.0)*100)).toFixed(0) + '%';
+    drawErrorVector(p, ikState.target);
+  } else {
+    document.getElementById('err-norm').textContent = '-';
+    document.getElementById('progress-bar').style.width = '0%';
+  }
+  document.getElementById('iter-count').textContent = ikState.iterCount;
+}
+
+// クリックで目標設定
+renderer.domElement.addEventListener('click', e=>{
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndcX = ((e.clientX - rect.left)/rect.width)*2 - 1;
+  const ndcY = -((e.clientY - rect.top)/rect.height)*2 + 1;
+  // ortho top-down view では NDC → world は単純なスケーリング
+  const wx = ndcX * camera.right;
+  const wz = -ndcY * camera.top;  // y が top-down なので逆転
+  ikState.target = {x: wx, z: wz};
+  targetMarker.position.x = wx;
+  targetMarker.position.z = wz;
+  targetMarker.visible = true;
+  document.getElementById('target-display').innerText = `[${fmt(wx)} ${fmt(wz)}]`;
+
+  // 解析解計算
+  computeAnalytic(wx, wz);
+
+  // 反復ログクリア
+  ikState.iterCount = 0;
+  ikState.log = [];
+  document.getElementById('iter-log').textContent = '';
+  applyState();
+});
+
+function stepIK(){
+  if(!ikState.target){
+    alert('まずキャンバス上をクリックして目標位置を設定してください');
+    return;
+  }
+  const p = fk(ikState.theta);
+  const dx = ikState.target.x - p.x;
+  const dz = ikState.target.z - p.z;
+  const errNorm = Math.hypot(dx, dz);
+  if(errNorm < 0.005){
+    pushLog(`収束！ k=${ikState.iterCount}, |e|=${errNorm.toFixed(5)}`);
+    return;
+  }
+  const J = jacobian(ikState.theta);
+  const Jinv = inv2(J);
+  if(!Jinv){
+    pushLog(`k=${ikState.iterCount}: ⚠ 特異姿勢でヤコビアン非可逆`);
+    return;
+  }
+  const dtheta = [
+    Jinv[0][0]*dx + Jinv[0][1]*dz,
+    Jinv[1][0]*dx + Jinv[1][1]*dz
+  ];
+  // ステップサイズ制限（発散防止）
+  const stepNorm = Math.hypot(dtheta[0], dtheta[1]);
+  const maxStep = 0.5;
+  const factor = stepNorm > maxStep ? maxStep/stepNorm : 1.0;
+  ikState.theta[0] += dtheta[0]*factor;
+  ikState.theta[1] += dtheta[1]*factor;
+  ikState.iterCount++;
+  pushLog(`k=${ikState.iterCount}: |e|=${errNorm.toFixed(4)}, Δθ=(${(dtheta[0]*factor).toFixed(3)},${(dtheta[1]*factor).toFixed(3)})`);
+
+  // 軌跡記録
+  drawTrailDot(p);
+
+  applyState();
+}
+
+function autoConverge(){
+  let count=0;
+  function tick(){
+    const p = fk(ikState.theta);
+    const dx = ikState.target.x - p.x, dz = ikState.target.z - p.z;
+    const err = Math.hypot(dx, dz);
+    if(err < 0.005 || count > 50){
+      pushLog(`自動収束停止: k=${ikState.iterCount}, |e|=${err.toFixed(5)}`);
+      return;
+    }
+    stepIK();
+    count++;
+    setTimeout(tick, 80);
+  }
+  tick();
+}
+
+function pushLog(msg){
+  ikState.log.push(msg);
+  if(ikState.log.length > 30) ikState.log.shift();
+  const el = document.getElementById('iter-log');
+  el.textContent = ikState.log.join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+function drawTrailDot(p){
+  const dotMat = new THREE.MeshBasicMaterial({color:0xFB923C, transparent:true, opacity:0.6});
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), dotMat);
+  dot.position.set(p.x, 0.06, p.z);
+  trailGroup.add(dot);
+  if(trailGroup.children.length > 30){
+    trailGroup.remove(trailGroup.children[0]);
+  }
+}
+
+function resetIteration(){
+  ikState.iterCount = 0;
+  ikState.log = [];
+  document.getElementById('iter-log').textContent = '';
+  while(trailGroup.children.length) trailGroup.remove(trailGroup.children[0]);
+  applyState();
+}
+
+function resetState(){
+  ikState.theta = [Math.PI/4, Math.PI/6];
+  ikState.target = null;
+  ikState.iterCount = 0;
+  ikState.log = [];
+  while(trailGroup.children.length) trailGroup.remove(trailGroup.children[0]);
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  targetMarker.visible = false;
+  document.getElementById('target-display').textContent = '未設定';
+  document.getElementById('analytic-up').textContent = '-';
+  document.getElementById('analytic-down').textContent = '-';
+  document.getElementById('iter-log').textContent = '';
+  applyState();
+}
+
+function setInit(deg1, deg2){
+  ikState.theta = [deg1*Math.PI/180, deg2*Math.PI/180];
+  resetIteration();
+}
+
+// 解析解 (2R)
+// 注：top-down 表示で z 軸を反転しているので、解析解の y を z に置き換える際は -1 倍
+function computeAnalytic(x, z){
+  // 順運動学では z = -(L1 s1 + L2 s12)
+  // つまり実 y = -z で扱う
+  const y = -z;
+  const r2 = x*x + y*y;
+  const c2 = (r2 - L1*L1 - L2*L2)/(2*L1*L2);
+  if(Math.abs(c2) > 1){
+    document.getElementById('analytic-up').textContent = '到達不能';
+    document.getElementById('analytic-down').textContent = '到達不能';
+    return;
+  }
+  const t2_up = Math.acos(c2);
+  const t2_dn = -t2_up;
+  const phi = Math.atan2(y, x);
+  const t1_up = phi - Math.atan2(L2*Math.sin(t2_up), L1+L2*Math.cos(t2_up));
+  const t1_dn = phi - Math.atan2(L2*Math.sin(t2_dn), L1+L2*Math.cos(t2_dn));
+  document.getElementById('analytic-up').textContent =
+    `θ=(${(t1_up*180/Math.PI).toFixed(1)}°, ${(t2_up*180/Math.PI).toFixed(1)}°)`;
+  document.getElementById('analytic-down').textContent =
+    `θ=(${(t1_dn*180/Math.PI).toFixed(1)}°, ${(t2_dn*180/Math.PI).toFixed(1)}°)`;
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-3; camera.right=3; camera.top=3*H/W; camera.bottom=-3*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  setSvgSize();
+  applyState();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+applyState();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.6 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

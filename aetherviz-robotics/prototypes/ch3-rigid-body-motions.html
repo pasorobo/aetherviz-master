@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.3 Rigid-Body Motions — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --bg-grad: linear-gradient(180deg, #0B1120 0%, #1E293B 50%, #0F172A 100%);
+    --glass-bg: rgba(15, 23, 42, 0.78);
+    --glass-border: rgba(99, 102, 241, 0.35);
+    --accent: #6366F1;
+    --accent2: #FB923C;
+  }
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:var(--bg-grad); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  .glass { background:var(--glass-bg); border:1px solid var(--glass-border); backdrop-filter: blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:380px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:12px; }
+  h1 { font-size:18px; font-weight:600; margin:0; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:var(--accent2); text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; font-weight:500; }
+  button:hover { filter:brightness(1.15); }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .matrix-display { font-family:'Courier New',monospace; background:rgba(0,0,0,0.4); padding:10px; border-radius:6px; margin-top:6px; }
+  .objective li { font-size:12px; color:#CBD5E1; margin:4px 0; }
+  .badge { display:inline-block; padding:2px 8px; background:var(--accent); border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.3</span>
+    <span style="font-weight:600;">Rigid-Body Motions / 剛体運動</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">SE(3) · Screw · Twist</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button class="btn-secondary" onclick="toggleSidebar()">侧栏</button>
+  </div>
+</div>
+
+<div id="sidebar" class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul class="objective">
+    <li>□ SO(3) と SE(3) の幾何的意味を理解する</li>
+    <li>□ ロドリゲス公式 R = e^[ω̂]θ を適用する</li>
+    <li>□ ねじ軸 S = (ω, v) とピッチ h を読み取れる</li>
+    <li>□ 同次変換行列 T と 6 次元ツイストを区別する</li>
+  </ul>
+
+  <h2>主要数式</h2>
+  <div id="formulas">
+    <div>$$ R = e^{[\hat{\omega}]\theta} = I + \sin\theta\,[\hat{\omega}] + (1-\cos\theta)[\hat{\omega}]^2 $$</div>
+    <div>$$ T = \begin{bmatrix} R & p \\ 0 & 1 \end{bmatrix} \in SE(3) $$</div>
+    <div>$$ \mathcal{S} = \begin{bmatrix} \omega \\ v \end{bmatrix},\ h = \frac{\omega \cdot v}{\|\omega\|^2} $$</div>
+  </div>
+
+  <h2>原理</h2>
+  <p style="font-size:12px; color:#CBD5E1; line-height:1.5;">
+    剛体の任意の運動は <strong>1 本のねじ軸まわりの回転 + その軸に沿う並進</strong> として表現できる（Chasles の定理）。
+    ねじ軸 ŝ、ピッチ h、回転量 θ の 3 要素が剛体運動を完全に決定する。
+  </p>
+</div>
+
+<div id="hud" class="hud glass">
+  <h2>状態 HUD</h2>
+  <div>R (回転行列):</div>
+  <div id="R-display" class="matrix-display"></div>
+  <div style="margin-top:8px;">T (同次変換):</div>
+  <div id="T-display" class="matrix-display"></div>
+  <div style="margin-top:8px;">スクリュー軸 S:</div>
+  <div id="S-display" class="matrix-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>制御パネル</h2>
+
+  <label>回転軸 φ (azimuth) <span id="phi-val">0°</span></label>
+  <input type="range" id="phi" min="0" max="360" value="0" step="1">
+
+  <label>回転軸 ψ (elevation) <span id="psi-val">90°</span></label>
+  <input type="range" id="psi" min="0" max="180" value="90" step="1">
+
+  <label>回転角 θ <span id="theta-val">0°</span></label>
+  <input type="range" id="theta" min="0" max="360" value="0" step="1">
+
+  <label>並進 px <span id="px-val">0</span></label>
+  <input type="range" id="px" min="-2" max="2" value="0" step="0.05">
+
+  <label>並進 py <span id="py-val">0</span></label>
+  <input type="range" id="py" min="-2" max="2" value="0" step="0.05">
+
+  <label>並進 pz <span id="pz-val">0</span></label>
+  <input type="range" id="pz" min="-2" max="2" value="0" step="0.05">
+
+  <div style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="animateScrew()">スクリュー運動を再生</button>
+    <button class="btn-secondary" onclick="setPreset('rotX90')">Rx(90°)</button>
+    <button class="btn-secondary" onclick="setPreset('helix')">螺旋</button>
+  </div>
+</div>
+
+<script>
+// ====== ロボティクス数学ユーティリティ ======
+function vec3(a,b,c){return [a,b,c];}
+function norm3(v){return Math.hypot(v[0],v[1],v[2]);}
+function normalize3(v){const n=norm3(v); return n<1e-9?[0,0,0]:[v[0]/n,v[1]/n,v[2]/n];}
+function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function cross3(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];}
+function scale3(v,s){return [v[0]*s,v[1]*s,v[2]*s];}
+function add3(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
+
+// SO(3) ロドリゲス公式
+function so3Exp(omegaHat, theta){
+  const [x,y,z]=omegaHat, c=Math.cos(theta), s=Math.sin(theta), v=1-c;
+  return [
+    [c+x*x*v,    x*y*v-z*s,  x*z*v+y*s],
+    [y*x*v+z*s,  c+y*y*v,    y*z*v-x*s],
+    [z*x*v-y*s,  z*y*v+x*s,  c+z*z*v]
+  ];
+}
+
+// 4×4 単位行列
+function eye4(){return [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];}
+
+// R(3×3) と p(3) から T(4×4) を組み立て
+function makeT(R,p){
+  return [[R[0][0],R[0][1],R[0][2],p[0]],
+          [R[1][0],R[1][1],R[1][2],p[1]],
+          [R[2][0],R[2][1],R[2][2],p[2]],
+          [0,0,0,1]];
+}
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+
+// ====== Three.js シーン ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0F172A, 8, 25);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(3.5, 2.8, 4.5);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+// ライト
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+dirLight.position.set(5,8,4);
+scene.add(dirLight);
+
+// グリッド
+const grid = new THREE.GridHelper(10, 20, 0x334155, 0x1E293B);
+scene.add(grid);
+
+// ====== 簡易 OrbitControls (マウスドラッグ + ホイール) ======
+let azimuth=Math.atan2(camera.position.x, camera.position.z);
+let polar=Math.acos(camera.position.y / camera.position.length());
+let radius=camera.position.length();
+let dragging=false, lastX=0, lastY=0;
+const rotateSpeed=0.005, zoomSpeed=0.001;
+function updateCamera(){
+  camera.position.x = radius*Math.sin(polar)*Math.sin(azimuth);
+  camera.position.y = radius*Math.cos(polar);
+  camera.position.z = radius*Math.sin(polar)*Math.cos(azimuth);
+  camera.lookAt(0,0,0);
+}
+renderer.domElement.addEventListener('mousedown', e=>{dragging=true; lastX=e.clientX; lastY=e.clientY;});
+window.addEventListener('mouseup', ()=>dragging=false);
+window.addEventListener('mousemove', e=>{
+  if(!dragging) return;
+  azimuth -= (e.clientX-lastX)*rotateSpeed;
+  polar = Math.max(0.1, Math.min(Math.PI-0.1, polar - (e.clientY-lastY)*rotateSpeed));
+  lastX=e.clientX; lastY=e.clientY;
+  updateCamera();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  radius = Math.max(2, Math.min(15, radius + e.deltaY*zoomSpeed*radius));
+  updateCamera(); e.preventDefault();
+}, {passive:false});
+
+// ====== フレーム描画ヘルパー ======
+function buildFrame(scale=0.8, opacity=1.0){
+  const g = new THREE.Group();
+  const mkArrow = (dir, color)=>{
+    const arr = new THREE.ArrowHelper(dir, new THREE.Vector3(0,0,0), scale, color, scale*0.18, scale*0.09);
+    arr.line.material.transparent = true; arr.line.material.opacity = opacity;
+    arr.cone.material.transparent = true; arr.cone.material.opacity = opacity;
+    return arr;
+  };
+  g.add(mkArrow(new THREE.Vector3(1,0,0), 0xEF4444));
+  g.add(mkArrow(new THREE.Vector3(0,1,0), 0x22C55E));
+  g.add(mkArrow(new THREE.Vector3(0,0,1), 0x3B82F6));
+  return g;
+}
+
+// 基準フレーム {s}
+const frameS = buildFrame(0.9, 0.45);
+scene.add(frameS);
+
+// 移動フレーム {b}
+const frameB = buildFrame(0.9, 1.0);
+scene.add(frameB);
+
+// 立方体（フレーム {b} に固定された剛体）
+const bodyMat = new THREE.MeshStandardMaterial({color:0x6366F1, transparent:true, opacity:0.55, metalness:0.3, roughness:0.4});
+const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), bodyMat);
+scene.add(body);
+
+// スクリュー軸表示
+let screwLine = null, screwArrow = null;
+function drawScrewAxis(omega, q){
+  if(screwLine) scene.remove(screwLine);
+  if(screwArrow) scene.remove(screwArrow);
+  const omegaUnit = normalize3(omega);
+  if(norm3(omega) < 1e-6) return;
+  const len = 6;
+  const p1 = add3(q, scale3(omegaUnit, -len/2));
+  const p2 = add3(q, scale3(omegaUnit, len/2));
+  const mat = new THREE.LineBasicMaterial({color:0xFB923C, linewidth:2, transparent:true, opacity:0.85});
+  const geom = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(...p1), new THREE.Vector3(...p2)
+  ]);
+  screwLine = new THREE.Line(geom, mat);
+  scene.add(screwLine);
+
+  screwArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(...omegaUnit), new THREE.Vector3(...q),
+    1.0, 0xFB923C, 0.2, 0.12
+  );
+  scene.add(screwArrow);
+}
+
+// ====== 状態管理 ======
+const state = {phi:0, psi:90, theta:0, px:0, py:0, pz:0};
+
+function update(){
+  const phi = state.phi*Math.PI/180;
+  const psi = state.psi*Math.PI/180;
+  const theta = state.theta*Math.PI/180;
+
+  // 球面座標から ω̂ を構築
+  const omegaHat = [
+    Math.sin(psi)*Math.cos(phi),
+    Math.cos(psi),
+    Math.sin(psi)*Math.sin(phi)
+  ];
+
+  // R = e^[ω̂]θ
+  const R = so3Exp(omegaHat, theta);
+  const p = [state.px, state.py, state.pz];
+  const T = makeT(R, p);
+
+  // フレーム {b} に変換を適用
+  frameB.matrix.set(
+    R[0][0],R[0][1],R[0][2],p[0],
+    R[1][0],R[1][1],R[1][2],p[1],
+    R[2][0],R[2][1],R[2][2],p[2],
+    0,0,0,1
+  );
+  frameB.matrixAutoUpdate = false;
+  body.matrix.copy(frameB.matrix);
+  body.matrixAutoUpdate = false;
+
+  // スクリュー軸：純回転の場合 ω̂ 軸（原点近傍）
+  drawScrewAxis(omegaHat, [0,0,0]);
+
+  // HUD 更新
+  document.getElementById('R-display').innerText =
+    `[${fmt(R[0][0])} ${fmt(R[0][1])} ${fmt(R[0][2])}]\n` +
+    `[${fmt(R[1][0])} ${fmt(R[1][1])} ${fmt(R[1][2])}]\n` +
+    `[${fmt(R[2][0])} ${fmt(R[2][1])} ${fmt(R[2][2])}]`;
+  document.getElementById('T-display').innerText =
+    `[${fmt(R[0][0])} ${fmt(R[0][1])} ${fmt(R[0][2])} ${fmt(p[0])}]\n` +
+    `[${fmt(R[1][0])} ${fmt(R[1][1])} ${fmt(R[1][2])} ${fmt(p[1])}]\n` +
+    `[${fmt(R[2][0])} ${fmt(R[2][1])} ${fmt(R[2][2])} ${fmt(p[2])}]\n` +
+    `[ 0.000  0.000  0.000  1.000]`;
+  document.getElementById('S-display').innerText =
+    `ω = [${fmt(omegaHat[0])} ${fmt(omegaHat[1])} ${fmt(omegaHat[2])}]\n` +
+    `θ = ${theta.toFixed(3)} rad (${state.theta}°)`;
+}
+
+// スライダーバインディング
+['phi','psi','theta','px','py','pz'].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    const lbl = document.getElementById(id+'-val');
+    if(['px','py','pz'].includes(id)) lbl.textContent = state[id].toFixed(2);
+    else lbl.textContent = state[id]+'°';
+    update();
+  });
+});
+
+function resetState(){
+  Object.assign(state, {phi:0, psi:90, theta:0, px:0, py:0, pz:0});
+  ['phi','psi','theta','px','py','pz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    const lbl = document.getElementById(id+'-val');
+    if(['px','py','pz'].includes(id)) lbl.textContent = state[id].toFixed(2);
+    else lbl.textContent = state[id]+'°';
+  });
+  update();
+}
+
+function setPreset(name){
+  if(name==='rotX90'){
+    Object.assign(state, {phi:0, psi:90, theta:90, px:0, py:0, pz:0});
+  } else if(name==='helix'){
+    Object.assign(state, {phi:0, psi:0, theta:180, px:0, py:1.0, pz:0});
+  }
+  ['phi','psi','theta','px','py','pz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    const lbl = document.getElementById(id+'-val');
+    if(['px','py','pz'].includes(id)) lbl.textContent = state[id].toFixed(2);
+    else lbl.textContent = state[id]+'°';
+  });
+  update();
+}
+
+let animating=false, animStart=0;
+function animateScrew(){
+  if(animating) return;
+  animating=true; animStart=performance.now();
+  const targetTheta=360, targetPy=1.5, dur=3000;
+  function step(t){
+    const k = Math.min(1, (t-animStart)/dur);
+    state.theta = targetTheta*k;
+    state.py = targetPy*k;
+    document.getElementById('theta').value = state.theta;
+    document.getElementById('py').value = state.py;
+    document.getElementById('theta-val').textContent = state.theta.toFixed(0)+'°';
+    document.getElementById('py-val').textContent = state.py.toFixed(2);
+    update();
+    if(k<1) requestAnimationFrame(step);
+    else animating=false;
+  }
+  requestAnimationFrame(step);
+}
+
+function toggleSidebar(){
+  const sb = document.getElementById('sidebar');
+  sb.style.display = sb.style.display==='none' ? 'block' : 'none';
+}
+
+// レンダーループ
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+// リサイズ
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// KaTeX
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.3 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>

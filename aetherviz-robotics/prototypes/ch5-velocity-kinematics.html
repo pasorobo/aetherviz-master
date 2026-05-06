@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.5 Velocity Kinematics & Jacobians — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:360px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .warn { color:#F59E0B; font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.5</span>
+    <span style="font-weight:600;">Velocity Kinematics & Jacobians / 速度運動学</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">2R Planar Arm</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button class="btn-secondary" onclick="findSingularity()">特異姿勢へ</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ ヤコビアン J(θ) を導出する</li>
+    <li>□ 関節速度 → エンドエフェクタ速度の写像 V = Jθ̇ を理解する</li>
+    <li>□ マニピュラビリティ楕円体を解釈する</li>
+    <li>□ 特異姿勢 det(J)=0 を識別する</li>
+  </ul>
+
+  <h2>2R 平面アームのヤコビアン</h2>
+  <div>$$ \mathbf{p} = \begin{bmatrix} L_1\cos\theta_1 + L_2\cos(\theta_1+\theta_2) \\ L_1\sin\theta_1 + L_2\sin(\theta_1+\theta_2) \end{bmatrix} $$</div>
+  <div>$$ J = \begin{bmatrix} -L_1 s_1 - L_2 s_{12} & -L_2 s_{12} \\ \phantom{-}L_1 c_1 + L_2 c_{12} & \phantom{-}L_2 c_{12} \end{bmatrix} $$</div>
+
+  <h2>マニピュラビリティ</h2>
+  <div>$$ \mu_1 = \sqrt{\det(JJ^T)} $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    マニピュラビリティ楕円体の主軸は <strong>JJᵀ の固有ベクトル</strong>、半径は <strong>固有値の平方根</strong>。
+    特異姿勢では楕円体が線分に潰れる（μ₁→0）。
+  </p>
+
+  <h2>凡例</h2>
+  <div style="font-size:11px;">
+    <div><span style="display:inline-block; width:14px; height:3px; background:#06B6D4; vertical-align:middle;"></span> J 第 1 列（θ₁ 寄与）</div>
+    <div><span style="display:inline-block; width:14px; height:3px; background:#A855F7; vertical-align:middle;"></span> J 第 2 列（θ₂ 寄与）</div>
+    <div><span style="display:inline-block; width:14px; height:14px; border:2px solid #14B8A6; border-radius:50%; vertical-align:middle;"></span> マニピュラビリティ楕円体</div>
+  </div>
+</div>
+
+<div class="hud glass">
+  <h2>状態</h2>
+  <div>エンドエフェクタ位置 p:</div>
+  <div class="matrix" id="p-display"></div>
+  <div style="margin-top:8px;">ヤコビアン J:</div>
+  <div class="matrix" id="J-display"></div>
+  <div style="margin-top:8px;">det(J):</div>
+  <div class="matrix" id="det-display"></div>
+  <div style="margin-top:8px;">マニピュラビリティ μ₁ = √det(JJᵀ):</div>
+  <div class="matrix" id="mu-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>関節角</h2>
+  <label>θ₁ <span id="t1-val">30°</span></label>
+  <input type="range" id="t1" min="-180" max="180" value="30" step="1">
+  <label>θ₂ <span id="t2-val">60°</span></label>
+  <input type="range" id="t2" min="-150" max="150" value="60" step="1">
+
+  <h2>関節速度（テスト用）</h2>
+  <label>θ̇₁ (rad/s) <span id="d1-val">0</span></label>
+  <input type="range" id="d1" min="-2" max="2" value="0" step="0.1">
+  <label>θ̇₂ (rad/s) <span id="d2-val">0</span></label>
+  <input type="range" id="d2" min="-2" max="2" value="0" step="0.1">
+  <p style="font-size:10px; color:#94A3B8;">→ V = Jθ̇ をエンドエフェクタに緑矢印で表示</p>
+</div>
+
+<script>
+const L1=1.5, L2=1.2;
+
+// ====== Three.js (top-down view) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+const W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-3, 3, 3*H/W, -3*H/W, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.8));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(2,8,3);
+scene.add(dir);
+
+scene.add(new THREE.GridHelper(8, 16, 0x334155, 0x1E293B));
+
+// ====== 2R アーム (xz 平面) ======
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5, roughness:0.4});
+const jointMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+
+// joint1 at origin
+const j1Marker = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), jointMat);
+j1Marker.position.y = 0.05;
+scene.add(j1Marker);
+
+const link1Group = new THREE.Group();
+scene.add(link1Group);
+const link1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, L1, 16), linkMat);
+link1.rotation.z = Math.PI/2;  // 沿 x 軸
+link1.position.x = L1/2;
+link1.position.y = 0.05;
+link1Group.add(link1);
+
+const link2Group = new THREE.Group();
+link2Group.position.x = L1;
+link2Group.position.y = 0.05;
+link1Group.add(link2Group);
+const j2Marker = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), jointMat);
+link2Group.add(j2Marker);
+const link2 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, L2, 16), linkMat);
+link2.rotation.z = Math.PI/2;
+link2.position.x = L2/2;
+link2Group.add(link2);
+
+const eeMat = new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.5});
+const ee = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), eeMat);
+ee.position.x = L2;
+link2Group.add(ee);
+
+// xz 平面で動かすため、Three.js では xz 座標系を使う
+// 関節 1 の z 軸は Three.js の y 軸（top-down view）
+function applyJointAngles(t1, t2){
+  link1Group.rotation.y = -t1; // top-down view では y 軸まわり回転で xz 平面の回転を表現
+  link2Group.rotation.y = -t2;
+}
+
+// ====== SVG オーバーレイ ======
+const svg = document.getElementById('svg-overlay');
+svg.setAttribute('width', W);
+svg.setAttribute('height', H);
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+// 3D ワールド座標 → SVG ピクセル座標
+function project(x, y, z){
+  const v = new THREE.Vector3(x, y, z);
+  v.project(camera);
+  return [(v.x*0.5+0.5)*W, (-v.y*0.5+0.5)*H];
+}
+
+// J 列の矢印 + マニピュラビリティ楕円体を描画
+function drawSVGOverlay(eeX, eeZ, J, ellipse){
+  // svg をクリア（既存子要素削除）
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // defs (矢印マーカー)
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  ['cyan-arrow','purple-arrow','green-arrow'].forEach((id,i)=>{
+    const colors=['#06B6D4','#A855F7','#22C55E'];
+    const m = document.createElementNS('http://www.w3.org/2000/svg','marker');
+    m.setAttribute('id', id);
+    m.setAttribute('viewBox','0 0 10 10');
+    m.setAttribute('refX','8'); m.setAttribute('refY','5');
+    m.setAttribute('markerWidth','6'); m.setAttribute('markerHeight','6');
+    m.setAttribute('orient','auto-start-reverse');
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d','M0,0 L10,5 L0,10 Z');
+    p.setAttribute('fill', colors[i]);
+    m.appendChild(p);
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  const [eeSx, eeSy] = project(eeX, 0, eeZ);
+
+  // J 列の矢印（J は 2x2 行列、エンドエフェクタの xz 平面の速度寄与）
+  // 第 1 列 (θ̇₁=1 のみ)
+  const scale = 0.5; // 視覚化スケール
+  const j1x = eeX + J[0][0]*scale;
+  const j1z = eeZ + J[1][0]*scale;
+  const [j1Sx, j1Sy] = project(j1x, 0, j1z);
+
+  const j2x = eeX + J[0][1]*scale;
+  const j2z = eeZ + J[1][1]*scale;
+  const [j2Sx, j2Sy] = project(j2x, 0, j2z);
+
+  const line1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  line1.setAttribute('x1',eeSx); line1.setAttribute('y1',eeSy);
+  line1.setAttribute('x2',j1Sx); line1.setAttribute('y2',j1Sy);
+  line1.setAttribute('stroke','#06B6D4'); line1.setAttribute('stroke-width','3');
+  line1.setAttribute('marker-end','url(#cyan-arrow)');
+  svg.appendChild(line1);
+
+  const line2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  line2.setAttribute('x1',eeSx); line2.setAttribute('y1',eeSy);
+  line2.setAttribute('x2',j2Sx); line2.setAttribute('y2',j2Sy);
+  line2.setAttribute('stroke','#A855F7'); line2.setAttribute('stroke-width','3');
+  line2.setAttribute('marker-end','url(#purple-arrow)');
+  svg.appendChild(line2);
+
+  // マニピュラビリティ楕円体 (主軸 e1, e2 と半径 r1, r2)
+  if(ellipse){
+    const {e1, e2, r1, r2} = ellipse;
+    // 楕円の角度（e1 の角度）
+    const angle = Math.atan2(e1[1], e1[0]) * 180/Math.PI;
+
+    // SVG 楕円中心 (eeSx, eeSy)
+    // 楕円の半径をワールドスケールで描き、SVG ピクセルへ
+    // 簡易近似：プロジェクション時のスケール係数を取得
+    const [pxsx, pxsy] = project(eeX+1, 0, eeZ);
+    const pxScale = Math.hypot(pxsx-eeSx, pxsy-eeSy);
+
+    const visScale = 0.4 * pxScale;
+
+    const ellipseEl = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+    ellipseEl.setAttribute('cx', eeSx);
+    ellipseEl.setAttribute('cy', eeSy);
+    ellipseEl.setAttribute('rx', Math.max(2, r1*visScale));
+    ellipseEl.setAttribute('ry', Math.max(2, r2*visScale));
+    // top-down view: z 軸が SVG の -y 方向、x が SVG の +x 方向
+    // 楕円の回転：xz 平面での角度を SVG 上で反映
+    ellipseEl.setAttribute('transform', `rotate(${-angle} ${eeSx} ${eeSy})`);
+    ellipseEl.setAttribute('fill','rgba(20,184,166,0.15)');
+    ellipseEl.setAttribute('stroke','#14B8A6');
+    ellipseEl.setAttribute('stroke-width','2');
+    ellipseEl.setAttribute('stroke-dasharray','4 3');
+    svg.appendChild(ellipseEl);
+  }
+
+  // 関節速度由来の合成 V = J θ̇ ベクトル（緑）
+  if(state.d1 !== 0 || state.d2 !== 0){
+    const vx = J[0][0]*state.d1 + J[0][1]*state.d2;
+    const vz = J[1][0]*state.d1 + J[1][1]*state.d2;
+    const vScale = 0.5;
+    const [vSx, vSy] = project(eeX+vx*vScale, 0, eeZ+vz*vScale);
+    const lv = document.createElementNS('http://www.w3.org/2000/svg','line');
+    lv.setAttribute('x1',eeSx); lv.setAttribute('y1',eeSy);
+    lv.setAttribute('x2',vSx); lv.setAttribute('y2',vSy);
+    lv.setAttribute('stroke','#22C55E'); lv.setAttribute('stroke-width','4');
+    lv.setAttribute('marker-end','url(#green-arrow)');
+    svg.appendChild(lv);
+
+    const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+    txt.setAttribute('x', vSx+8); txt.setAttribute('y', vSy);
+    txt.setAttribute('fill','#22C55E'); txt.setAttribute('font-size','12');
+    txt.setAttribute('font-family','monospace');
+    txt.textContent = `V = (${vx.toFixed(2)}, ${vz.toFixed(2)})`;
+    svg.appendChild(txt);
+  }
+}
+
+// ====== 状態 ======
+const state = {t1:30, t2:60, d1:0, d2:0};
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+function fmtMat(M){return M.map(row=>'['+row.map(fmt).join(' ')+']').join('\n');}
+
+// JJᵀ の固有分解 (2x2 対称行列)
+function eigenDecompose2x2(A){
+  const a=A[0][0], b=A[0][1], d=A[1][1];
+  const tr = a+d, det = a*d - b*b;
+  const disc = Math.sqrt(Math.max(0, tr*tr/4 - det));
+  const lam1 = tr/2 + disc;
+  const lam2 = tr/2 - disc;
+  // 固有ベクトル
+  let e1, e2;
+  if(Math.abs(b) > 1e-9){
+    e1 = [b, lam1-a];
+    e2 = [b, lam2-a];
+  } else {
+    e1 = a>=d ? [1,0] : [0,1];
+    e2 = a>=d ? [0,1] : [1,0];
+  }
+  const n1 = Math.hypot(e1[0],e1[1]) || 1;
+  const n2 = Math.hypot(e2[0],e2[1]) || 1;
+  e1 = [e1[0]/n1, e1[1]/n1];
+  e2 = [e2[0]/n2, e2[1]/n2];
+  return {lam1, lam2, e1, e2};
+}
+
+function update(){
+  const t1 = state.t1*Math.PI/180;
+  const t2 = state.t2*Math.PI/180;
+
+  // ビジュアル更新（top-down view, xz 平面）
+  applyJointAngles(t1, t2);
+
+  // ヤコビアン (2x2): エンドエフェクタの (x, z) 速度を (θ̇₁, θ̇₂) で表現
+  // p = (L1 c1 + L2 c12, L1 s1 + L2 s12) で、ここでは Three.js の (x, z) として扱う
+  const c1=Math.cos(t1), s1=Math.sin(t1), c12=Math.cos(t1+t2), s12=Math.sin(t1+t2);
+  const J = [
+    [-L1*s1 - L2*s12, -L2*s12],
+    [ L1*c1 + L2*c12,  L2*c12]
+  ];
+  const det = J[0][0]*J[1][1] - J[0][1]*J[1][0];
+
+  // JJᵀ
+  const JJT = [
+    [J[0][0]*J[0][0]+J[0][1]*J[0][1], J[0][0]*J[1][0]+J[0][1]*J[1][1]],
+    [J[1][0]*J[0][0]+J[1][1]*J[0][1], J[1][0]*J[1][0]+J[1][1]*J[1][1]]
+  ];
+  const eig = eigenDecompose2x2(JJT);
+  const r1 = Math.sqrt(Math.max(0, eig.lam1));
+  const r2 = Math.sqrt(Math.max(0, eig.lam2));
+  const mu1 = Math.sqrt(Math.max(0, JJT[0][0]*JJT[1][1] - JJT[0][1]*JJT[1][0]));
+
+  // エンドエフェクタの世界座標 (Three.js は y-up なので z で平面を表す)
+  const eeX = L1*c1 + L2*c12;
+  const eeZ_ = -(L1*s1 + L2*s12); // top-down 表示で y 軸まわり回転 → x-z 平面では z = -y_world
+  // top-down view 表示の整合性のため、z 軸方向を反転して描画
+
+  document.getElementById('p-display').innerText =
+    `[${fmt(eeX)} ${fmt(L1*s1+L2*s12)}]`;
+  document.getElementById('J-display').innerText = fmtMat(J);
+  const detEl = document.getElementById('det-display');
+  detEl.innerText = fmt(det);
+  if(Math.abs(det) < 0.05){
+    detEl.innerHTML += ' <span class="warn">⚠ 特異姿勢に近い</span>';
+  }
+  document.getElementById('mu-display').innerText = fmt(mu1);
+
+  // SVG オーバーレイ更新
+  drawSVGOverlay(eeX, eeZ_, J, {
+    e1: eig.e1, e2: eig.e2, r1, r2
+  });
+}
+
+['t1','t2','d1','d2'].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    const lbl = document.getElementById(id+'-val');
+    if(['t1','t2'].includes(id)) lbl.textContent = state[id]+'°';
+    else lbl.textContent = state[id].toFixed(1);
+    update();
+  });
+});
+
+function resetState(){
+  Object.assign(state, {t1:30, t2:60, d1:0, d2:0});
+  ['t1','t2','d1','d2'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    const lbl = document.getElementById(id+'-val');
+    if(['t1','t2'].includes(id)) lbl.textContent = state[id]+'°';
+    else lbl.textContent = state[id].toFixed(1);
+  });
+  update();
+}
+
+function findSingularity(){
+  // θ₂ = 0 または 180 で 2R アームは特異姿勢（アームが完全に伸びる/折りたたむ）
+  state.t1 = 45; state.t2 = 0;
+  document.getElementById('t1').value = 45;
+  document.getElementById('t2').value = 0;
+  document.getElementById('t1-val').textContent = '45°';
+  document.getElementById('t2-val').textContent = '0°';
+  update();
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  const W=window.innerWidth, H=window.innerHeight;
+  camera.left=-3; camera.right=3; camera.top=3*H/W; camera.bottom=-3*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  update();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.5 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+</body>
+</html>
