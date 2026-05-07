@@ -30,10 +30,12 @@
   .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
   .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
 </style>
-<!-- aetherviz-robotics mobile shim v2 (landscape aware)
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
    注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
    - ポートレート: 上下ドロワー + 下部水平タブバー
-   - ランドスケープ (height ≤ 500): 右からスライドドロワー + 右端縦タブストリップ
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
    - タッチ → マウスイベント変換
    - ピンチ → wheel イベント変換（3D ズーム）
 -->
@@ -117,7 +119,7 @@
 
   #plots, #joint-space { display: none !important; }
 
-  /* ch2-cspace: ワーク/Cspace 縦並び */
+  /* ch2-cspace: 縦並び */
   #ws-svg, #cs-svg {
     position: fixed !important;
     left: 8px !important;
@@ -154,17 +156,19 @@
 }
 
 /* ============================================================ */
-/* === ランドスケープ (横持ちスマホ、height ≤ 500px) === */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
 /* ============================================================ */
 @media (orientation: landscape) and (max-height: 500px) {
   body { font-size: 11px; }
 
+  /* ナビ：右レール分の余白を確保 */
   .nav {
     padding: 3px 8px !important;
     flex-wrap: nowrap !important;
     gap: 4px;
     left: 4px !important;
-    right: 52px !important;
+    right: 292px !important;
     top: 4px !important;
     height: 32px;
     box-sizing: border-box;
@@ -183,29 +187,55 @@
   .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
   .badge { font-size: 8px; padding: 1px 3px; }
 
-  /* 全パネルを右からスライドイン (タブバー隣接) */
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
   .sidebar, .panel, .hud {
     position: fixed !important;
-    top: 36px !important;
+    top: 40px !important;
     bottom: 4px !important;
-    right: 48px !important;
+    right: 4px !important;
     left: auto !important;
-    width: 320px !important;
-    max-width: 65vw !important;
-    max-height: calc(100vh - 40px) !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
     height: auto !important;
     overflow-y: auto;
-    transition: transform .3s ease, opacity .3s ease;
+    transition: opacity .2s ease;
     z-index: 25;
     padding: 8px 10px !important;
     box-sizing: border-box;
-    border-radius: 12px 0 0 12px !important;
-    transform: translateX(calc(100% + 60px)) !important;
-    opacity: 0;
-    pointer-events: none;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
   }
   .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
-    transform: translateX(0) !important;
     opacity: 1 !important;
     pointer-events: auto !important;
   }
@@ -223,54 +253,39 @@
   button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
   label { font-size: 9px !important; margin-top: 4px !important; }
 
-  #plots, #joint-space { display: none !important; }
-
-  /* ch2-cspace: 横並びを維持 (タブバー分の余白考慮) */
-  #ws-svg, #cs-svg {
-    position: fixed !important;
-    top: 36px !important;
-    bottom: 0 !important;
-    height: auto !important;
-    max-height: none !important;
-    width: auto !important;
-  }
-  #ws-svg { left: 4px !important; right: calc(50% + 24px) !important; }
-  #cs-svg { left: calc(50% - 20px) !important; right: 48px !important; }
-
-  /* 右端縦タブストリップ */
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
   #mobile-tabs {
     display: flex !important;
-    flex-direction: column !important;
+    flex-direction: row !important;
     position: fixed !important;
-    top: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
+    top: 4px !important;
+    right: 4px !important;
     left: auto !important;
-    width: 44px !important;
-    height: 100% !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
     background: rgba(15,23,42,0.95);
-    border-left: 1px solid rgba(99,102,241,0.4);
-    border-top: none;
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
     z-index: 40;
     backdrop-filter: blur(8px);
-    padding-top: 36px;
-    box-sizing: border-box;
+    padding: 0 !important;
+    overflow: hidden;
   }
   #mobile-tabs button {
-    flex: 0 0 auto !important;
-    width: 100% !important;
-    height: 64px !important;
-    border-right: none;
-    border-bottom: 1px solid rgba(99,102,241,0.2);
-    font-size: 18px !important;
-    padding: 0 !important;
-    flex-direction: column !important;
-    line-height: 1.1 !important;
-    gap: 2px !important;
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
   }
-  #mobile-tabs button:last-child { border-bottom: none; }
-  #mobile-tabs .tab-icon { font-size: 20px !important; }
-  #mobile-tabs .tab-label { font-size: 8px !important; }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
 }
 </style>
 </head>
@@ -713,36 +728,94 @@ update();
 </div>
 <script id="mobile-shim-js">
 (function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
   // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
   document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
     btn.addEventListener('click', function(e){
       e.stopPropagation();
-      var name = btn.dataset.mob;
-      var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
-      var el = document.querySelector(map[name]);
-      if(!el) return;
-      var wasOpen = el.classList.contains('mobile-open');
-      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
-      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
-      if(!wasOpen){
-        el.classList.add('mobile-open');
-        btn.classList.add('active');
-      }
+      activateTab(btn.dataset.mob, false);
     });
   });
-  // パネル外側タップで閉じる
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
   document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
     var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
     if(!inside){
       document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
       document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
     }
   });
-  // 画面回転で開いているパネルをリセット (レイアウト破綻防止)
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
   window.addEventListener('orientationchange', function(){
-    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
-    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    setTimeout(applyOrientation, 200);
   });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
 
   // ==== タッチ → マウス/wheel イベント変換 ====
   function mouseEvt(type, t){
