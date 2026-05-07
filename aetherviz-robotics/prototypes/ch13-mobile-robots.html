@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.13 Mobile Robots (Differential Drive) — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:360px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .mode-btn { background:rgba(255,255,255,0.08); padding:4px 8px; }
+  .mode-btn.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.13</span>
+    <span style="font-weight:600;">Wheeled Mobile Robots / 移動ロボット</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Differential Drive</span>
+  </div>
+  <div>
+    <button onclick="resetPose()">姿勢リセット</button>
+    <button onclick="clearTrail()" class="btn-secondary">軌跡クリア</button>
+    <button onclick="togglePlay()" id="play-btn" class="btn-success">▶ 開始</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 差動駆動の運動学を理解する</li>
+    <li>□ 車輪速度 (v_L, v_R) ↔ ボディツイスト (v, ω) の変換</li>
+    <li>□ デッドレコニング（オドメトリ）の積分式を学ぶ</li>
+    <li>□ 瞬間回転中心 (ICR) を識別する</li>
+  </ul>
+
+  <h2>運動学</h2>
+  <div>$$ v = \frac{v_R + v_L}{2},\quad \omega = \frac{v_R - v_L}{2d} $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">d = 車輪間距離の半分</p>
+
+  <h2>姿勢の積分</h2>
+  <div>$$ \dot x = v\cos\phi,\ \dot y = v\sin\phi,\ \dot\phi = \omega $$</div>
+
+  <h2>ICR</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    回転半径 R = v/ω。<br>
+    ICR は車軸延長線上で、ロボット中心から R 離れた点。
+  </p>
+
+  <h2>制御モード</h2>
+  <ul style="font-size:11px; color:#CBD5E1;">
+    <li><strong>Manual</strong>: スライダーで直接 v_L, v_R を制御</li>
+    <li><strong>Body Twist</strong>: v, ω を直接指定</li>
+    <li><strong>Go-to-Goal</strong>: クリックした点へ自動誘導</li>
+  </ul>
+</div>
+
+<div class="hud glass">
+  <h2>姿勢 q = (x, y, φ)</h2>
+  <div class="matrix" id="pose-display"></div>
+  <h2>ボディツイスト V_b</h2>
+  <div class="matrix" id="twist-display"></div>
+  <h2>車輪速度</h2>
+  <div class="matrix" id="wheel-display"></div>
+  <h2>ICR (瞬間回転中心)</h2>
+  <div class="matrix" id="icr-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>制御モード</h2>
+  <div style="display:flex; gap:6px;">
+    <button class="mode-btn active" data-mode="manual" onclick="setMode('manual')">Manual</button>
+    <button class="mode-btn" data-mode="twist" onclick="setMode('twist')">Twist</button>
+    <button class="mode-btn" data-mode="goto" onclick="setMode('goto')">Go-to-Goal</button>
+  </div>
+
+  <div id="manual-controls">
+    <h2>車輪速度 (rad/s)</h2>
+    <label>v_L (左) <span id="vL-val">0.0</span></label>
+    <input type="range" id="vL" min="-3" max="3" value="0" step="0.05">
+    <label>v_R (右) <span id="vR-val">0.0</span></label>
+    <input type="range" id="vR" min="-3" max="3" value="0" step="0.05">
+  </div>
+
+  <div id="twist-controls" style="display:none;">
+    <h2>ボディツイスト</h2>
+    <label>v (m/s) <span id="vb-val">0.5</span></label>
+    <input type="range" id="vb" min="-2" max="2" value="0.5" step="0.05">
+    <label>ω (rad/s) <span id="wb-val">0.0</span></label>
+    <input type="range" id="wb" min="-3" max="3" value="0" step="0.05">
+  </div>
+
+  <div id="goto-controls" style="display:none;">
+    <h2>Go-to-Goal</h2>
+    <p style="font-size:11px; color:#94A3B8;">キャンバスをクリックして目標を設定</p>
+    <p style="font-size:11px; color:#22D3EE;">目標: <span id="goal-readout">未設定</span></p>
+  </div>
+
+  <h2>機体パラメータ</h2>
+  <label>車輪間距離 2d <span id="2d-val">0.5</span></label>
+  <input type="range" id="2d" min="0.2" max="1.0" value="0.5" step="0.01">
+  <label>車輪半径 r <span id="r-val">0.10</span></label>
+  <input type="range" id="r" min="0.05" max="0.3" value="0.10" step="0.005">
+
+  <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="btn-secondary" onclick="setPreset('forward')">前進</button>
+    <button class="btn-secondary" onclick="setPreset('spin')">スピン</button>
+    <button class="btn-secondary" onclick="setPreset('arc')">円弧</button>
+  </div>
+</div>
+
+<script>
+// ====== Three.js (top-down) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-3, 3, 3*H/W, -3*H/W, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.7));
+scene.add(new THREE.GridHelper(10, 20, 0x334155, 0x1E293B));
+
+// ====== ロボット構築 ======
+const robotGroup = new THREE.Group();
+scene.add(robotGroup);
+
+const bodyMat = new THREE.MeshStandardMaterial({color:0x6366F1, metalness:0.5});
+const bodyMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.15, 24), bodyMat);
+bodyMesh.position.y = 0.08;
+robotGroup.add(bodyMesh);
+
+// 進行方向矢印
+const dirMat = new THREE.MeshBasicMaterial({color:0xFB923C});
+const dirMesh = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.18, 16), dirMat);
+dirMesh.rotation.z = -Math.PI/2;
+dirMesh.position.set(0.18, 0.08, 0);
+robotGroup.add(dirMesh);
+
+// 車輪
+const wheelMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+const wheelL = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.04, 16), wheelMat);
+wheelL.rotation.x = Math.PI/2;
+wheelL.position.set(0, 0.10, -0.25);
+robotGroup.add(wheelL);
+const wheelR = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 0.04, 16), wheelMat);
+wheelR.rotation.x = Math.PI/2;
+wheelR.position.set(0, 0.10, 0.25);
+robotGroup.add(wheelR);
+
+// 軌跡
+let trailGroup = new THREE.Group();
+scene.add(trailGroup);
+
+// 目標マーカー
+const goalMat = new THREE.MeshBasicMaterial({color:0x10B981});
+const goalMark = new THREE.Mesh(new THREE.RingGeometry(0.13, 0.17, 24), goalMat);
+goalMark.rotation.x = -Math.PI/2;
+goalMark.position.y = 0.05;
+goalMark.visible = false;
+scene.add(goalMark);
+
+// ICR マーカー
+const icrMat = new THREE.MeshBasicMaterial({color:0xA855F7, transparent:true, opacity:0.7});
+const icrMark = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), icrMat);
+icrMark.visible = false;
+scene.add(icrMark);
+
+// ====== 状態 ======
+const state = {
+  pose: {x:0, y:0, phi:0},   // φ in radians, robot's heading
+  vL:0, vR:0,                 // 角速度 (rad/s)
+  v:0.5, w:0,                 // ボディツイスト
+  goal:null,
+  d:0.25,                     // 半幅 (車輪間距離の半分)
+  r:0.10,
+  mode:'manual',
+  playing:false,
+  trail: []
+};
+
+const dt = 0.02;
+let lastTime = performance.now();
+
+function controlLoop(){
+  if(!state.playing) return;
+  const now = performance.now();
+  const elapsed = (now - lastTime)/1000;
+  lastTime = now;
+  const steps = Math.min(20, Math.floor(elapsed/dt));
+  for(let i=0;i<steps;i++) simStep();
+  update();
+  requestAnimationFrame(controlLoop);
+}
+
+function simStep(){
+  // モードに応じて v_L, v_R を決定
+  let vL = state.vL, vR = state.vR;
+
+  if(state.mode === 'twist'){
+    // (v, ω) → (v_L, v_R)
+    // v_R = (v + ω·d) / r,  v_L = (v - ω·d) / r
+    vL = (state.v - state.w*state.d) / state.r;
+    vR = (state.v + state.w*state.d) / state.r;
+    state.vL = vL; state.vR = vR;
+  } else if(state.mode === 'goto'){
+    if(state.goal){
+      // 簡易：エラー → ω, 距離 → v
+      const dx = state.goal[0] - state.pose.x;
+      const dy = state.goal[1] - state.pose.y;
+      const dist = Math.hypot(dx, dy);
+      const angleToGoal = Math.atan2(dy, dx);
+      let phiErr = angleToGoal - state.pose.phi;
+      // 正規化 [-π, π]
+      while(phiErr > Math.PI) phiErr -= 2*Math.PI;
+      while(phiErr < -Math.PI) phiErr += 2*Math.PI;
+      // 制御則
+      state.w = 3.0 * phiErr;
+      state.v = Math.min(0.7, 0.6*dist) * Math.cos(phiErr);
+      if(dist < 0.05){ state.v = 0; state.w = 0; }
+      vL = (state.v - state.w*state.d) / state.r;
+      vR = (state.v + state.w*state.d) / state.r;
+      state.vL = vL; state.vR = vR;
+    }
+  }
+
+  // 運動学積分
+  // v_world = (vL + vR)/2 * r
+  // ω_world = (vR - vL)/(2d) * r
+  const v_lin = (vL + vR)/2 * state.r;
+  const omg = (vR - vL)/(2*state.d) * state.r;
+
+  state.pose.x += v_lin * Math.cos(state.pose.phi) * dt;
+  state.pose.y += v_lin * Math.sin(state.pose.phi) * dt;
+  state.pose.phi += omg * dt;
+
+  // 軌跡記録（間引き）
+  if(state.trail.length === 0 ||
+     Math.hypot(state.pose.x - state.trail[state.trail.length-1][0],
+                state.pose.y - state.trail[state.trail.length-1][1]) > 0.03){
+    state.trail.push([state.pose.x, state.pose.y]);
+    if(state.trail.length > 800) state.trail.shift();
+  }
+}
+
+function update(){
+  // ロボット描画位置
+  robotGroup.position.set(state.pose.x, 0, -state.pose.y);
+  robotGroup.rotation.y = -state.pose.phi;
+
+  // 軌跡描画
+  while(trailGroup.children.length) trailGroup.remove(trailGroup.children[0]);
+  if(state.trail.length > 1){
+    const pts = state.trail.map(p=>new THREE.Vector3(p[0], 0.04, -p[1]));
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    trailGroup.add(new THREE.Line(g, new THREE.LineBasicMaterial({color:0xFB923C, transparent:true, opacity:0.65})));
+  }
+
+  // 目標
+  if(state.goal){
+    goalMark.visible = true;
+    goalMark.position.set(state.goal[0], 0.05, -state.goal[1]);
+  } else {
+    goalMark.visible = false;
+  }
+
+  // ICR
+  const v_lin = (state.vL + state.vR)/2 * state.r;
+  const omg = (state.vR - state.vL)/(2*state.d) * state.r;
+  let icrText = '直進中（ω=0）';
+  if(Math.abs(omg) > 0.01){
+    const R = v_lin / omg;
+    const icrX = state.pose.x - R * Math.sin(state.pose.phi);
+    const icrY = state.pose.y + R * Math.cos(state.pose.phi);
+    icrMark.visible = true;
+    icrMark.position.set(icrX, 0.05, -icrY);
+    icrText = `(${icrX.toFixed(2)}, ${icrY.toFixed(2)}), R=${R.toFixed(2)}`;
+  } else {
+    icrMark.visible = false;
+  }
+
+  // HUD
+  document.getElementById('pose-display').textContent =
+    `x  = ${state.pose.x.toFixed(3)}\ny  = ${state.pose.y.toFixed(3)}\nφ  = ${(state.pose.phi*180/Math.PI).toFixed(1)}°`;
+  document.getElementById('twist-display').textContent =
+    `v  = ${v_lin.toFixed(3)} m/s\nω  = ${omg.toFixed(3)} rad/s`;
+  document.getElementById('wheel-display').textContent =
+    `v_L = ${state.vL.toFixed(2)} rad/s\nv_R = ${state.vR.toFixed(2)} rad/s`;
+  document.getElementById('icr-display').textContent = icrText;
+
+  // 機体寸法を反映（描画）
+  wheelL.position.z = -state.d;
+  wheelR.position.z = state.d;
+  bodyMesh.scale.x = state.d / 0.25;
+  bodyMesh.scale.z = state.d / 0.25;
+}
+
+// ====== UI ======
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.mode === m);
+  });
+  document.getElementById('manual-controls').style.display = m==='manual' ? 'block' : 'none';
+  document.getElementById('twist-controls').style.display = m==='twist' ? 'block' : 'none';
+  document.getElementById('goto-controls').style.display = m==='goto' ? 'block' : 'none';
+}
+
+['vL','vR'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[id].toFixed(2);
+  });
+});
+document.getElementById('vb').addEventListener('input', e=>{
+  state.v = parseFloat(e.target.value);
+  document.getElementById('vb-val').textContent = state.v.toFixed(2);
+});
+document.getElementById('wb').addEventListener('input', e=>{
+  state.w = parseFloat(e.target.value);
+  document.getElementById('wb-val').textContent = state.w.toFixed(2);
+});
+document.getElementById('2d').addEventListener('input', e=>{
+  state.d = parseFloat(e.target.value)/2;
+  document.getElementById('2d-val').textContent = (state.d*2).toFixed(2);
+});
+document.getElementById('r').addEventListener('input', e=>{
+  state.r = parseFloat(e.target.value);
+  document.getElementById('r-val').textContent = state.r.toFixed(3);
+});
+
+// goto モードのクリック
+renderer.domElement.addEventListener('click', e=>{
+  if(state.mode !== 'goto') return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndcX = ((e.clientX - rect.left)/rect.width)*2 - 1;
+  const ndcY = -((e.clientY - rect.top)/rect.height)*2 + 1;
+  const wx = ndcX * 3;
+  const wy = ndcY * 3*H/W;
+  // top-down view: x → x, y(world) → -z(scene)
+  state.goal = [wx, -(-wy)];  // wy 直接（ndcY 上→画面上→world +y）
+  // 注: top-down view で Three.js の y 軸を上から見ているので world y = -scene_z = ndcY * top
+  state.goal = [wx, ndcY * (3*H/W)];
+  document.getElementById('goal-readout').textContent =
+    `(${state.goal[0].toFixed(2)}, ${state.goal[1].toFixed(2)})`;
+  update();
+});
+
+function togglePlay(){
+  state.playing = !state.playing;
+  document.getElementById('play-btn').textContent = state.playing ? '⏸ 停止' : '▶ 開始';
+  if(state.playing){ lastTime = performance.now(); controlLoop(); }
+}
+
+function resetPose(){
+  state.pose = {x:0, y:0, phi:0};
+  state.trail = [];
+  update();
+}
+
+function clearTrail(){
+  state.trail = [];
+  update();
+}
+
+function setPreset(name){
+  if(name === 'forward'){
+    setMode('manual');
+    state.vL = 1.5; state.vR = 1.5;
+    document.getElementById('vL').value = 1.5; document.getElementById('vR').value = 1.5;
+    document.getElementById('vL-val').textContent = '1.50'; document.getElementById('vR-val').textContent = '1.50';
+  } else if(name === 'spin'){
+    setMode('manual');
+    state.vL = -1.0; state.vR = 1.0;
+    document.getElementById('vL').value = -1.0; document.getElementById('vR').value = 1.0;
+    document.getElementById('vL-val').textContent = '-1.00'; document.getElementById('vR-val').textContent = '1.00';
+  } else if(name === 'arc'){
+    setMode('manual');
+    state.vL = 1.0; state.vR = 2.0;
+    document.getElementById('vL').value = 1.0; document.getElementById('vR').value = 2.0;
+    document.getElementById('vL-val').textContent = '1.00'; document.getElementById('vR-val').textContent = '2.00';
+  }
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-3; camera.right=3; camera.top=3*H/W; camera.bottom=-3*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.13 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

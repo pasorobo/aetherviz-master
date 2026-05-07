@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.4 Forward Kinematics (PoE) — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root { --bg: linear-gradient(180deg,#0B1120,#1E293B,#0F172A); }
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:var(--bg); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:360px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.4</span>
+    <span style="font-weight:600;">Forward Kinematics / 順運動学</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">PoE · 3R Arm</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button class="btn-secondary" onclick="randomPose()">ランダム姿勢</button>
+  </div>
+</div>
+
+<div id="sidebar" class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 指数積公式 (PoE) を多関節アームに適用する</li>
+    <li>□ スクリュー軸 Sᵢ の物理的意味を理解する</li>
+    <li>□ ホーム姿勢 M とジョイント変位の合成を学ぶ</li>
+  </ul>
+
+  <h2>PoE 公式</h2>
+  <div>$$ T_{sb}(\theta) = e^{[\mathcal{S}_1]\theta_1} e^{[\mathcal{S}_2]\theta_2} e^{[\mathcal{S}_3]\theta_3} \cdot M $$</div>
+
+  <h2>3R アーム諸元</h2>
+  <p style="font-size:12px; color:#CBD5E1;">
+    関節 1：z 軸まわり（waist）<br>
+    関節 2：y 軸まわり（shoulder）@ z=L1<br>
+    関節 3：y 軸まわり（elbow）@ x=L2<br>
+    リンク長 L1 = L2 = L3 = 1
+  </p>
+
+  <h2>スクリュー軸 (空間)</h2>
+  <div class="matrix" id="screw-list"></div>
+
+  <h2>ホーム姿勢 M</h2>
+  <div class="matrix" id="M-display"></div>
+</div>
+
+<div id="hud" class="hud glass">
+  <h2>T_sb (現在のエンドエフェクタ姿勢)</h2>
+  <div class="matrix" id="T-display"></div>
+  <div style="margin-top:8px;">エンドエフェクタ位置 p:</div>
+  <div class="matrix" id="p-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>関節角</h2>
+
+  <label>θ₁ (waist) <span id="t1-val">0°</span></label>
+  <input type="range" id="t1" min="-180" max="180" value="0" step="1">
+
+  <label>θ₂ (shoulder) <span id="t2-val">0°</span></label>
+  <input type="range" id="t2" min="-90" max="90" value="0" step="1">
+
+  <label>θ₃ (elbow) <span id="t3-val">0°</span></label>
+  <input type="range" id="t3" min="-150" max="150" value="0" step="1">
+
+  <div style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="setHome()">ホーム M</button>
+    <button class="btn-secondary" onclick="toggleScrews()">スクリュー軸表示</button>
+    <button class="btn-secondary" onclick="animateSweep()">関節掃引</button>
+  </div>
+</div>
+
+<script>
+// ====== 数学ユーティリティ ======
+const L1=1, L2=1, L3=1;
+
+function so3Exp(omega, theta){
+  const [x,y,z]=omega, c=Math.cos(theta), s=Math.sin(theta), v=1-c;
+  return [
+    [c+x*x*v,   x*y*v-z*s, x*z*v+y*s],
+    [y*x*v+z*s, c+y*y*v,   y*z*v-x*s],
+    [z*x*v-y*s, z*y*v+x*s, c+z*z*v]
+  ];
+}
+
+// SE(3) 指数写像: T = e^[S]θ
+// S = [ω; v] (6x1), 純回転 ‖ω‖=1 を仮定
+function se3Exp(S, theta){
+  const omega=[S[0],S[1],S[2]], v=[S[3],S[4],S[5]];
+  const R = so3Exp(omega, theta);
+  const [wx,wy,wz]=omega;
+  // G(θ) = Iθ + (1-cos θ)[ω] + (θ - sin θ)[ω]²
+  const c=Math.cos(theta), s=Math.sin(theta);
+  // [ω] スキュー
+  const W=[[0,-wz,wy],[wz,0,-wx],[-wy,wx,0]];
+  const W2 = matmul3(W,W);
+  const G=[];
+  for(let i=0;i<3;i++){
+    G.push([]);
+    for(let j=0;j<3;j++){
+      G[i].push((i===j?theta:0) + (1-c)*W[i][j] + (theta-s)*W2[i][j]);
+    }
+  }
+  // p = G * v
+  const p=[
+    G[0][0]*v[0]+G[0][1]*v[1]+G[0][2]*v[2],
+    G[1][0]*v[0]+G[1][1]*v[1]+G[1][2]*v[2],
+    G[2][0]*v[0]+G[2][1]*v[1]+G[2][2]*v[2]
+  ];
+  return [
+    [R[0][0],R[0][1],R[0][2],p[0]],
+    [R[1][0],R[1][1],R[1][2],p[1]],
+    [R[2][0],R[2][1],R[2][2],p[2]],
+    [0,0,0,1]
+  ];
+}
+
+function matmul3(A,B){
+  const C=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++)for(let k=0;k<3;k++) C[i][j]+=A[i][k]*B[k][j];
+  return C;
+}
+function matmul4(A,B){
+  const C=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++) C[i][j]+=A[i][k]*B[k][j];
+  return C;
+}
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+function fmtMat(M){
+  return M.map(row=>'['+row.map(fmt).join(' ')+']').join('\n');
+}
+
+// ====== 3R アームのスクリュー軸とホーム姿勢 ======
+// S1: ω=(0,0,1), q=(0,0,0) → v=-ω×q=(0,0,0)
+// S2: ω=(0,1,0), q=(0,0,L1) → v=-ω×q=-(0,1,0)×(0,0,L1)=-(L1,0,0)=(-L1,0,0)
+// S3: ω=(0,1,0), q=(L2,0,L1) → v=-ω×q=-(0,1,0)×(L2,0,L1)=-(L1,0,-L2)=(-L1,0,L2)
+const S1 = [0,0,1, 0,0,0];
+const S2 = [0,1,0, -L1,0,0];
+const S3 = [0,1,0, -L1,0,L2];
+const M  = [[1,0,0,L2+L3],[0,1,0,0],[0,0,1,L1],[0,0,0,1]];
+
+// ====== Three.js シーン ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0F172A, 8, 30);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(4, 3, 5);
+camera.lookAt(0,0.7,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+dirLight.position.set(5,8,4); dirLight.castShadow=true;
+scene.add(dirLight);
+
+scene.add(new THREE.GridHelper(10, 20, 0x334155, 0x1E293B));
+
+// 簡易 OrbitControls
+let azimuth=Math.atan2(camera.position.x, camera.position.z);
+let polar=Math.acos((camera.position.y-0.7) / Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z));
+let radius=Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z);
+const target = new THREE.Vector3(0,0.7,0);
+let dragging=false, lastX=0, lastY=0;
+function updateCamera(){
+  camera.position.x = target.x + radius*Math.sin(polar)*Math.sin(azimuth);
+  camera.position.y = target.y + radius*Math.cos(polar);
+  camera.position.z = target.z + radius*Math.sin(polar)*Math.cos(azimuth);
+  camera.lookAt(target);
+}
+renderer.domElement.addEventListener('mousedown', e=>{dragging=true; lastX=e.clientX; lastY=e.clientY;});
+window.addEventListener('mouseup', ()=>dragging=false);
+window.addEventListener('mousemove', e=>{
+  if(!dragging) return;
+  azimuth -= (e.clientX-lastX)*0.005;
+  polar = Math.max(0.1, Math.min(Math.PI-0.1, polar - (e.clientY-lastY)*0.005));
+  lastX=e.clientX; lastY=e.clientY;
+  updateCamera();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  radius = Math.max(2, Math.min(20, radius + e.deltaY*0.001*radius));
+  updateCamera(); e.preventDefault();
+}, {passive:false});
+
+// ====== ロボット構築 (Three.js グループ階層) ======
+function makeFrameAxes(scale=0.4){
+  const g = new THREE.Group();
+  g.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), scale, 0xEF4444, scale*0.2, scale*0.1));
+  g.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), scale, 0x22C55E, scale*0.2, scale*0.1));
+  g.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), scale, 0x3B82F6, scale*0.2, scale*0.1));
+  return g;
+}
+
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5, roughness:0.4});
+const jointMat = new THREE.MeshStandardMaterial({color:0xFACC15, metalness:0.6, roughness:0.3});
+
+// ベースフレーム
+scene.add(makeFrameAxes(0.6));
+// ベース円柱
+const base = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 0.15, 24), jointMat);
+base.position.y = 0.075;
+scene.add(base);
+
+// shoulderGroup: 関節 1 (z 軸回転)
+const shoulderGroup = new THREE.Group();
+scene.add(shoulderGroup);
+
+// 関節 1 円柱マーカー
+const joint1 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.2, 24), jointMat);
+joint1.position.y = 0.25;
+shoulderGroup.add(joint1);
+
+// 垂直リンク (Link 1)
+const link1 = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, L1, 16), linkMat);
+link1.position.y = L1/2 + 0.15;
+shoulderGroup.add(link1);
+
+// elbow1Group: 関節 2 (y 軸回転) @ y = L1
+const elbow1Group = new THREE.Group();
+elbow1Group.position.set(0, L1+0.15, 0);
+shoulderGroup.add(elbow1Group);
+
+// 関節 2 円柱マーカー
+const joint2 = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.2, 24), jointMat);
+joint2.rotation.z = Math.PI/2;
+elbow1Group.add(joint2);
+
+// 水平リンク (Link 2) - 沿 x 軸
+const link2 = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, L2, 16), linkMat);
+link2.rotation.z = Math.PI/2;
+link2.position.x = L2/2;
+elbow1Group.add(link2);
+
+// elbow2Group: 関節 3 (y 軸回転) @ x = L2
+const elbow2Group = new THREE.Group();
+elbow2Group.position.set(L2, 0, 0);
+elbow1Group.add(elbow2Group);
+
+// 関節 3 円柱マーカー
+const joint3 = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.18, 24), jointMat);
+joint3.rotation.z = Math.PI/2;
+elbow2Group.add(joint3);
+
+// 水平リンク (Link 3)
+const link3 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, L3, 16), linkMat);
+link3.rotation.z = Math.PI/2;
+link3.position.x = L3/2;
+elbow2Group.add(link3);
+
+// エンドエフェクタ
+const eeMat = new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.4});
+const ee = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), eeMat);
+ee.position.set(L3, 0, 0);
+elbow2Group.add(ee);
+
+// エンドエフェクタフレーム
+const eeFrame = makeFrameAxes(0.3);
+eeFrame.position.set(L3, 0, 0);
+elbow2Group.add(eeFrame);
+
+// ====== スクリュー軸の可視化 ======
+let screwGroup = new THREE.Group();
+scene.add(screwGroup);
+let screwsVisible = true;
+
+function rebuildScrews(){
+  while(screwGroup.children.length) screwGroup.remove(screwGroup.children[0]);
+  if(!screwsVisible) return;
+  // S1: z 軸を通って原点
+  const s1mat = new THREE.LineBasicMaterial({color:0xFB923C, transparent:true, opacity:0.6});
+  const s1geom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,-0.5,0), new THREE.Vector3(0,2.5,0)]);
+  screwGroup.add(new THREE.Line(s1geom, s1mat));
+  // S2: y 軸を通って (0,L1,0)
+  const s2geom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,L1+0.15,-1.0), new THREE.Vector3(0,L1+0.15,1.0)]);
+  screwGroup.add(new THREE.Line(s2geom, s1mat));
+  // S3: y 軸を通って (L2,L1,0) - 但し θ1 適用後に動く。ここは初期姿勢で表示
+  const s3geom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(L2,L1+0.15,-1.0), new THREE.Vector3(L2,L1+0.15,1.0)]);
+  screwGroup.add(new THREE.Line(s3geom, s1mat));
+}
+rebuildScrews();
+
+function toggleScrews(){
+  screwsVisible = !screwsVisible;
+  rebuildScrews();
+}
+
+// ====== 状態と更新 ======
+const state = {t1:0, t2:0, t3:0};
+
+function update(){
+  const th1 = state.t1*Math.PI/180;
+  const th2 = state.t2*Math.PI/180;
+  const th3 = state.t3*Math.PI/180;
+
+  // ビジュアル：グループ階層に直接適用（運動学的に等価）
+  shoulderGroup.rotation.y = th1;  // Three.js の Y-up と {s} の Z-up を一致させるため、
+                                    // ここでは {s} の z 軸を Three.js の y 軸として表示する
+  elbow1Group.rotation.z = th2;
+  elbow2Group.rotation.z = th3;
+
+  // PoE で T_sb を計算（教育的表示用）
+  const T1 = se3Exp(S1, th1);
+  const T2 = se3Exp(S2, th2);
+  const T3 = se3Exp(S3, th3);
+  const Tsb = matmul4(matmul4(matmul4(T1, T2), T3), M);
+
+  document.getElementById('T-display').innerText = fmtMat(Tsb);
+  document.getElementById('p-display').innerText =
+    `[${fmt(Tsb[0][3])} ${fmt(Tsb[1][3])} ${fmt(Tsb[2][3])}]`;
+}
+
+['t1','t2','t3'].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[id]+'°';
+    update();
+  });
+});
+
+function resetState(){
+  state.t1=0; state.t2=0; state.t3=0;
+  ['t1','t2','t3'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent = '0°';
+  });
+  update();
+}
+
+function setHome(){ resetState(); }
+
+function randomPose(){
+  state.t1 = (Math.random()*360-180)|0;
+  state.t2 = (Math.random()*180-90)|0;
+  state.t3 = (Math.random()*300-150)|0;
+  ['t1','t2','t3'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent = state[id]+'°';
+  });
+  update();
+}
+
+let sweeping=false;
+function animateSweep(){
+  if(sweeping) return;
+  sweeping=true;
+  const start = performance.now();
+  function step(t){
+    const k = (t-start)/4000;
+    state.t1 = 90*Math.sin(k*Math.PI*2);
+    state.t2 = 45*Math.cos(k*Math.PI*2);
+    state.t3 = 60*Math.sin(k*Math.PI*4);
+    ['t1','t2','t3'].forEach(id=>{
+      document.getElementById(id).value = state[id];
+      document.getElementById(id+'-val').textContent = state[id].toFixed(0)+'°';
+    });
+    update();
+    if(k<1) requestAnimationFrame(step);
+    else sweeping=false;
+  }
+  requestAnimationFrame(step);
+}
+
+// ====== サイドバー HUD 初期化 ======
+document.getElementById('screw-list').innerText =
+  `S1 = [ω; v] = [0 0 1 | 0 0 0]\n` +
+  `S2 = [ω; v] = [0 1 0 |${fmt(-L1)} 0 0]\n` +
+  `S3 = [ω; v] = [0 1 0 |${fmt(-L1)} 0${fmt(L2)}]`;
+document.getElementById('M-display').innerText = fmtMat(M);
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.4 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

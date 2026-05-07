@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.10 A* & Potential Fields — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #plot-svg { position:absolute; inset:0; z-index:1; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .matrix { background:rgba(0,0,0,0.4); padding:6px; border-radius:6px; font-family:'Courier New',monospace; font-size:11px; }
+  .mode-btn { background:rgba(255,255,255,0.08); padding:4px 8px; }
+  .mode-btn.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<svg id="plot-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.10</span>
+    <span style="font-weight:600;">A\* / Potential Fields / 探索 vs 場</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Grid Search & Gradient Descent</span>
+  </div>
+  <div>
+    <button onclick="resetWorld()">世界リセット</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ A\* の f(n) = g(n) + h(n) コスト関数を理解</li>
+    <li>□ open / closed リストの推移を観察</li>
+    <li>□ 引力場 + 斥力場の合成と局所最小問題を確認</li>
+    <li>□ 探索 vs リアクティブ計画のトレードオフ</li>
+  </ul>
+
+  <h2>A\* アルゴリズム</h2>
+  <div>$$ f(n) = g(n) + h(n) $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    h(n) = ヒューリスティック（Manhattan / Euclidean）。<br>
+    h ≤ 真コスト → 最適解保証 (admissible)。
+  </p>
+
+  <h2>ポテンシャル場</h2>
+  <div>$$ U_\mathrm{att}(q) = \tfrac{1}{2} k_a \|q - q_\mathrm{goal}\|^2 $$</div>
+  <div>$$ U_\mathrm{rep}(q) = \begin{cases} \tfrac{1}{2} k_r (\tfrac{1}{d} - \tfrac{1}{d_0})^2 & d < d_0 \\ 0 & d \geq d_0 \end{cases} $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    勾配降下: q ← q - α∇U。<br>
+    <strong>欠点</strong>: 局所最小に陥りやすい。
+  </p>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    モード「壁」を選び左ドラッグで障害物を描画。<br>
+    「start」「goal」モードでクリック設定。<br>
+    実行ボタンで計画を可視化。
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>状態</h2>
+  <div>モード: <span id="alg-readout">A\*</span></div>
+  <div>start: <span id="start-readout">未設定</span></div>
+  <div>goal:  <span id="goal-readout">未設定</span></div>
+  <div>状態: <span id="status">待機</span></div>
+  <div>展開ノード数: <span id="expanded">0</span></div>
+  <div>パス長: <span id="path-len">-</span></div>
+  <div style="margin-top:8px;">凡例:</div>
+  <div style="font-size:10px; line-height:1.6;">
+    <span style="display:inline-block; width:12px; height:12px; background:#475569; vertical-align:middle;"></span> 障害物
+    <span style="display:inline-block; width:12px; height:12px; background:#22C55E; vertical-align:middle;"></span> start
+    <span style="display:inline-block; width:12px; height:12px; background:#EF4444; vertical-align:middle;"></span> goal<br>
+    <span style="display:inline-block; width:12px; height:12px; background:#06B6D4; vertical-align:middle;"></span> closed
+    <span style="display:inline-block; width:12px; height:12px; background:#A855F7; vertical-align:middle;"></span> open
+    <span style="display:inline-block; width:12px; height:12px; background:#FBBF24; vertical-align:middle;"></span> path
+  </div>
+</div>
+
+<div class="panel glass">
+  <h2>アルゴリズム</h2>
+  <div style="display:flex; gap:6px;">
+    <button class="mode-btn active" data-alg="astar" onclick="setAlg('astar')">A\*</button>
+    <button class="mode-btn" data-alg="potential" onclick="setAlg('potential')">Potential</button>
+  </div>
+
+  <h2>編集モード</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="mode-btn active" data-mode="wall" onclick="setMode('wall')">壁</button>
+    <button class="mode-btn" data-mode="erase" onclick="setMode('erase')">消去</button>
+    <button class="mode-btn" data-mode="start" onclick="setMode('start')">start</button>
+    <button class="mode-btn" data-mode="goal" onclick="setMode('goal')">goal</button>
+  </div>
+
+  <div id="astar-params">
+    <h2>A\* パラメータ</h2>
+    <label>ヒューリスティック</label>
+    <select id="heuristic" style="width:100%; padding:4px; background:rgba(0,0,0,0.4); color:#F1F5F9; border:1px solid #334155;">
+      <option value="manhattan">Manhattan</option>
+      <option value="euclidean" selected>Euclidean</option>
+      <option value="zero">Zero (Dijkstra)</option>
+    </select>
+    <label style="margin-top:8px;">移動コスト 8 隣接 <input type="checkbox" id="diag" checked></label>
+  </div>
+
+  <div id="pot-params" style="display:none;">
+    <h2>Potential パラメータ</h2>
+    <label>k_att <span id="ka-val">0.5</span></label>
+    <input type="range" id="ka" min="0.1" max="2" value="0.5" step="0.05">
+    <label>k_rep <span id="kr-val">2.0</span></label>
+    <input type="range" id="kr" min="0" max="10" value="2.0" step="0.1">
+    <label>d_0 (影響半径) <span id="d0-val">3.0</span></label>
+    <input type="range" id="d0" min="1" max="6" value="3.0" step="0.1">
+    <label>ステップ α <span id="alpha-val">0.5</span></label>
+    <input type="range" id="alpha" min="0.05" max="1.5" value="0.5" step="0.05">
+    <label><input type="checkbox" id="show-field" checked> ベクトル場を表示</label>
+  </div>
+
+  <h2>実行</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="run()" class="btn-success">計画実行</button>
+    <button onclick="loadDemo()" class="btn-secondary">デモシーン</button>
+  </div>
+</div>
+
+<script>
+const COLS = 40, ROWS = 25;
+let cellSize = 0;
+const svg = document.getElementById('plot-svg');
+
+// ====== 状態 ======
+const state = {
+  alg:'astar',
+  mode:'wall',
+  grid: Array.from({length:ROWS}, ()=>Array(COLS).fill(0)),  // 0=free, 1=obs
+  start: null, goal: null,
+  expanded: [], path: null,
+  potField: null,
+  potTrajectory: null,
+  ka:0.5, kr:2.0, d0:3.0, alpha:0.5
+};
+
+function setSvg(){
+  const W = window.innerWidth, H = window.innerHeight;
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  cellSize = Math.min((W-40)/COLS, (H-40)/ROWS);
+}
+setSvg();
+
+function gridToPx(c, r){
+  const W = window.innerWidth, H = window.innerHeight;
+  const ox = (W - COLS*cellSize)/2;
+  const oy = (H - ROWS*cellSize)/2;
+  return [ox + c*cellSize, oy + r*cellSize];
+}
+function pxToGrid(px, py){
+  const W = window.innerWidth, H = window.innerHeight;
+  const ox = (W - COLS*cellSize)/2;
+  const oy = (H - ROWS*cellSize)/2;
+  return [Math.floor((px-ox)/cellSize), Math.floor((py-oy)/cellSize)];
+}
+
+// ====== A\* ======
+function astar(){
+  if(!state.start || !state.goal) return null;
+  const heuristic = document.getElementById('heuristic').value;
+  const diag = document.getElementById('diag').checked;
+  const h = (a, b) => {
+    if(heuristic === 'manhattan') return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]);
+    if(heuristic === 'zero') return 0;
+    return Math.hypot(a[0]-b[0], a[1]-b[1]);
+  };
+
+  const key = (c,r)=>r*COLS+c;
+  const open = new Map();   // key -> {f,g,c,r,parent}
+  const closed = new Set();
+  const expanded = [];
+  open.set(key(...state.start), {f:0, g:0, c:state.start[0], r:state.start[1], parent:null});
+
+  const neighbors = diag
+    ? [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]]
+    : [[-1,0],[1,0],[0,-1],[0,1]];
+
+  while(open.size > 0){
+    // 最小 f
+    let bestK=null, bestN=null;
+    for(const [k, n] of open){
+      if(!bestN || n.f < bestN.f){ bestK=k; bestN=n; }
+    }
+    open.delete(bestK);
+    closed.add(bestK);
+    expanded.push([bestN.c, bestN.r]);
+
+    if(bestN.c === state.goal[0] && bestN.r === state.goal[1]){
+      // パス再構築
+      const path = [];
+      let n = bestN;
+      while(n){ path.push([n.c, n.r]); n = n.parent; }
+      path.reverse();
+      return {expanded, path};
+    }
+
+    for(const [dc, dr] of neighbors){
+      const nc = bestN.c+dc, nr = bestN.r+dr;
+      if(nc<0||nc>=COLS||nr<0||nr>=ROWS) continue;
+      if(state.grid[nr][nc] === 1) continue;
+      const nk = key(nc, nr);
+      if(closed.has(nk)) continue;
+      const stepCost = (dc===0||dr===0) ? 1 : Math.SQRT2;
+      const g = bestN.g + stepCost;
+      const ex = open.get(nk);
+      if(ex && g >= ex.g) continue;
+      open.set(nk, {f: g + h([nc,nr], state.goal), g, c:nc, r:nr, parent: bestN});
+    }
+  }
+  return {expanded, path: null};
+}
+
+// ====== Potential Fields ======
+function potentialAt(c, r){
+  const dx = state.goal[0] - c, dy = state.goal[1] - r;
+  let U_att = 0.5 * state.ka * (dx*dx + dy*dy);
+  let U_rep = 0;
+  for(let rr=0; rr<ROWS; rr++){
+    for(let cc=0; cc<COLS; cc++){
+      if(state.grid[rr][cc] !== 1) continue;
+      const d = Math.hypot(cc-c, rr-r);
+      if(d > 0 && d < state.d0){
+        U_rep += 0.5 * state.kr * (1/d - 1/state.d0) * (1/d - 1/state.d0);
+      } else if(d === 0){
+        U_rep += 1e6;
+      }
+    }
+  }
+  return U_att + U_rep;
+}
+
+function gradientAt(c, r){
+  const dxAtt = state.ka * (c - state.goal[0]);
+  const dyAtt = state.ka * (r - state.goal[1]);
+  let dxRep = 0, dyRep = 0;
+  for(let rr=0; rr<ROWS; rr++){
+    for(let cc=0; cc<COLS; cc++){
+      if(state.grid[rr][cc] !== 1) continue;
+      const dx = c - cc, dy = r - rr;
+      const d = Math.hypot(dx, dy);
+      if(d > 0 && d < state.d0){
+        const factor = state.kr * (1/d - 1/state.d0) * (1/(d*d*d));
+        dxRep += factor * dx;
+        dyRep += factor * dy;
+      }
+    }
+  }
+  return [dxAtt + dxRep, dyAtt + dyRep];
+}
+
+function runPotential(){
+  if(!state.start || !state.goal) return null;
+  const traj = [[...state.start]];
+  let q = [state.start[0], state.start[1]];
+  const maxIter = 500;
+  for(let it=0; it<maxIter; it++){
+    if(Math.hypot(q[0]-state.goal[0], q[1]-state.goal[1]) < 0.5){
+      traj.push([state.goal[0], state.goal[1]]);
+      return {trajectory: traj, success:true};
+    }
+    const g = gradientAt(q[0], q[1]);
+    const gNorm = Math.hypot(g[0], g[1]);
+    if(gNorm < 0.01) return {trajectory: traj, success:false, reason:'局所最小'};
+    q[0] -= state.alpha * g[0] / gNorm;
+    q[1] -= state.alpha * g[1] / gNorm;
+    // 範囲チェック
+    q[0] = Math.max(0, Math.min(COLS-1, q[0]));
+    q[1] = Math.max(0, Math.min(ROWS-1, q[1]));
+    traj.push([q[0], q[1]]);
+  }
+  return {trajectory: traj, success:false, reason:'反復上限'};
+}
+
+// ====== 描画 ======
+function draw(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // ベクトル場（Potential モード）
+  if(state.alg === 'potential' && document.getElementById('show-field').checked && state.goal){
+    for(let r=0; r<ROWS; r+=2){
+      for(let c=0; c<COLS; c+=2){
+        if(state.grid[r][c] === 1) continue;
+        const g = gradientAt(c, r);
+        const gn = Math.hypot(g[0], g[1]) || 1;
+        const [px, py] = gridToPx(c+0.5, r+0.5);
+        const len = Math.min(cellSize*0.7, gn*1);
+        const ex = px - g[0]/gn * len, ey = py - g[1]/gn * len;
+        const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+        ln.setAttribute('x1', px); ln.setAttribute('y1', py);
+        ln.setAttribute('x2', ex); ln.setAttribute('y2', ey);
+        ln.setAttribute('stroke','rgba(168,85,247,0.5)'); ln.setAttribute('stroke-width','1');
+        svg.appendChild(ln);
+      }
+    }
+  }
+
+  // グリッド
+  for(let r=0; r<ROWS; r++){
+    for(let c=0; c<COLS; c++){
+      const [x, y] = gridToPx(c, r);
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', x); rect.setAttribute('y', y);
+      rect.setAttribute('width', cellSize); rect.setAttribute('height', cellSize);
+      let fill = 'rgba(15,23,42,0.5)';
+      if(state.grid[r][c] === 1) fill = '#475569';
+      rect.setAttribute('fill', fill);
+      rect.setAttribute('stroke','rgba(51,65,85,0.5)');
+      rect.setAttribute('stroke-width','0.5');
+      svg.appendChild(rect);
+    }
+  }
+
+  // A\* 展開ノード
+  if(state.alg === 'astar'){
+    for(const [c, r] of state.expanded){
+      if(state.start && c === state.start[0] && r === state.start[1]) continue;
+      if(state.goal && c === state.goal[0] && r === state.goal[1]) continue;
+      const [x, y] = gridToPx(c, r);
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('x', x+1); rect.setAttribute('y', y+1);
+      rect.setAttribute('width', cellSize-2); rect.setAttribute('height', cellSize-2);
+      rect.setAttribute('fill','rgba(6,182,212,0.4)');
+      svg.appendChild(rect);
+    }
+
+    if(state.path){
+      for(const [c, r] of state.path){
+        if(state.start && c === state.start[0] && r === state.start[1]) continue;
+        if(state.goal && c === state.goal[0] && r === state.goal[1]) continue;
+        const [x, y] = gridToPx(c, r);
+        const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        rect.setAttribute('x', x+1); rect.setAttribute('y', y+1);
+        rect.setAttribute('width', cellSize-2); rect.setAttribute('height', cellSize-2);
+        rect.setAttribute('fill','rgba(251,191,36,0.7)');
+        svg.appendChild(rect);
+      }
+    }
+  }
+
+  // Potential 軌跡
+  if(state.alg === 'potential' && state.potTrajectory){
+    const pts = state.potTrajectory.map(p=>{
+      const [x, y] = gridToPx(p[0]+0.5, p[1]+0.5);
+      return [x, y];
+    });
+    const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    pl.setAttribute('points', pts.map(p=>p[0]+','+p[1]).join(' '));
+    pl.setAttribute('stroke','#FBBF24'); pl.setAttribute('stroke-width','3');
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke-linejoin','round');
+    svg.appendChild(pl);
+  }
+
+  // start / goal
+  if(state.start){
+    const [x, y] = gridToPx(state.start[0], state.start[1]);
+    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x', x); r.setAttribute('y', y);
+    r.setAttribute('width', cellSize); r.setAttribute('height', cellSize);
+    r.setAttribute('fill','#22C55E');
+    svg.appendChild(r);
+  }
+  if(state.goal){
+    const [x, y] = gridToPx(state.goal[0], state.goal[1]);
+    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('x', x); r.setAttribute('y', y);
+    r.setAttribute('width', cellSize); r.setAttribute('height', cellSize);
+    r.setAttribute('fill','#EF4444');
+    svg.appendChild(r);
+  }
+}
+
+function updateHUD(){
+  document.getElementById('alg-readout').textContent = state.alg === 'astar' ? 'A\\*' : 'Potential';
+  document.getElementById('start-readout').textContent = state.start ? `(${state.start[0]}, ${state.start[1]})` : '未設定';
+  document.getElementById('goal-readout').textContent = state.goal ? `(${state.goal[0]}, ${state.goal[1]})` : '未設定';
+  document.getElementById('expanded').textContent = state.expanded.length;
+  document.getElementById('path-len').textContent = state.path ? state.path.length : (state.potTrajectory ? state.potTrajectory.length : '-');
+}
+
+// ====== UI ======
+function setAlg(a){
+  state.alg = a;
+  document.querySelectorAll('[data-alg]').forEach(b=>b.classList.toggle('active', b.dataset.alg === a));
+  document.getElementById('astar-params').style.display = a==='astar' ? 'block' : 'none';
+  document.getElementById('pot-params').style.display = a==='potential' ? 'block' : 'none';
+  state.expanded = []; state.path = null; state.potTrajectory = null;
+  document.getElementById('status').textContent = '待機';
+  draw(); updateHUD();
+}
+
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active', b.dataset.mode === m));
+}
+
+function run(){
+  if(!state.start || !state.goal){ alert('start と goal を設定してください'); return; }
+  if(state.alg === 'astar'){
+    const result = astar();
+    state.expanded = result ? result.expanded : [];
+    state.path = result ? result.path : null;
+    state.potTrajectory = null;
+    document.getElementById('status').textContent = state.path ? `✓ 解発見 (パス長 ${state.path.length})` : '✗ 失敗';
+  } else {
+    const result = runPotential();
+    state.potTrajectory = result.trajectory;
+    state.expanded = []; state.path = null;
+    document.getElementById('status').textContent = result.success ? `✓ 収束 (${result.trajectory.length} 反復)` : `✗ ${result.reason}`;
+  }
+  draw(); updateHUD();
+}
+
+let dragging = false;
+svg.addEventListener('mousedown', e=>{ dragging = true; handleClick(e); });
+svg.addEventListener('mousemove', e=>{ if(dragging) handleClick(e); });
+window.addEventListener('mouseup', ()=>{ dragging = false; });
+
+function handleClick(e){
+  const [c, r] = pxToGrid(e.clientX, e.clientY);
+  if(c<0||c>=COLS||r<0||r>=ROWS) return;
+  if(state.mode === 'wall'){
+    state.grid[r][c] = 1;
+  } else if(state.mode === 'erase'){
+    state.grid[r][c] = 0;
+  } else if(state.mode === 'start'){
+    state.start = [c, r]; state.grid[r][c] = 0;
+    state.expanded = []; state.path = null; state.potTrajectory = null;
+  } else if(state.mode === 'goal'){
+    state.goal = [c, r]; state.grid[r][c] = 0;
+    state.expanded = []; state.path = null; state.potTrajectory = null;
+  }
+  draw(); updateHUD();
+}
+
+['ka','kr','d0','alpha'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[id].toFixed(2);
+    draw();
+  });
+});
+document.getElementById('show-field').addEventListener('change', draw);
+
+function resetWorld(){
+  state.grid = Array.from({length:ROWS}, ()=>Array(COLS).fill(0));
+  state.start = null; state.goal = null;
+  state.expanded = []; state.path = null; state.potTrajectory = null;
+  document.getElementById('status').textContent = '待機';
+  draw(); updateHUD();
+}
+
+function loadDemo(){
+  resetWorld();
+  state.start = [3, 12]; state.goal = [36, 12];
+  // U 字障害物（Potential 局所最小デモ）
+  for(let r=5; r<20; r++){ state.grid[r][18] = 1; }
+  for(let c=18; c<28; c++){ state.grid[5][c] = 1; }
+  for(let c=18; c<28; c++){ state.grid[19][c] = 1; }
+  // ランダム小ブロック
+  for(let r=2; r<8; r++) state.grid[r][8] = 1;
+  draw(); updateHUD();
+}
+
+window.addEventListener('resize', ()=>{ setSvg(); draw(); });
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+loadDemo();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.10 A\*/Potential Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

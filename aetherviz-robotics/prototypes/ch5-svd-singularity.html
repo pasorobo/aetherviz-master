@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.5 SVD & Singularities — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  #joint-space { position:fixed; bottom:12px; left:12px; width:200px; height:200px; padding:8px; z-index:5; }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.5</span>
+    <span style="font-weight:600;">SVD & Singularities</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">J = UΣVᵀ</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ ヤコビアンの SVD 分解 J = U Σ Vᵀ を理解</li>
+    <li>□ V 列を関節速度の "主軸"、U 列を EE 速度の主軸として読む</li>
+    <li>□ 条件数 κ = σ_max/σ_min が劣化する特異姿勢を識別</li>
+  </ul>
+
+  <h2>SVD 分解</h2>
+  <div>$$ J = U\Sigma V^T,\quad \Sigma = \mathrm{diag}(\sigma_1, \sigma_2) $$</div>
+  <div>$$ \dot x = U \Sigma V^T \dot\theta $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    関節空間の単位ベクトル <strong>v_i</strong> が、タスク空間の <strong>σ_i u_i</strong> へ写像される。<br>
+    σ_i = 0 ⟺ 関節方向 v_i が EE 速度を生まない（特異）。
+  </p>
+
+  <h2>マニピュラビリティ尺度</h2>
+  <div>$$ \mu_1 = \sigma_1 \sigma_2,\quad \mu_2 = \frac{\sigma_2}{\sigma_1},\quad \mu_3 = \sigma_2 $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    μ₁ = 楕円体体積、μ₂ = 形状均質性、μ₃ = 最小特異値（特異点距離）
+  </p>
+
+  <h2>凡例</h2>
+  <div style="font-size:11px;">
+    <div><span style="color:#22D3EE;">━</span> u₁ (σ₁ 方向、EE 主可動方向)</div>
+    <div><span style="color:#A855F7;">━</span> u₂ (σ₂ 方向)</div>
+    <div><span style="color:#FB923C;">━</span> マニピュラビリティ楕円体</div>
+    <div style="margin-top:4px;">関節空間 inset では V 列を表示</div>
+  </div>
+</div>
+
+<div class="hud glass">
+  <h2>ヤコビアン解析</h2>
+  <div>J:</div>
+  <div class="matrix" id="J-display"></div>
+  <div style="margin-top:8px;">σ₁ = <span id="s1-display"></span></div>
+  <div>σ₂ = <span id="s2-display"></span></div>
+  <div>条件数 κ = σ₁/σ₂ = <span id="kappa-display"></span></div>
+  <div>μ₁ = σ₁σ₂ = <span id="mu-display"></span></div>
+  <div style="margin-top:8px;">U:</div>
+  <div class="matrix" id="U-display"></div>
+  <div style="margin-top:4px;">V:</div>
+  <div class="matrix" id="V-display"></div>
+  <div style="margin-top:8px;">特異性:</div>
+  <div id="sing-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>関節角</h2>
+  <label>θ₁ <span id="t1-val">30°</span></label>
+  <input type="range" id="t1" min="-180" max="180" value="30" step="1">
+  <label>θ₂ <span id="t2-val">60°</span></label>
+  <input type="range" id="t2" min="-150" max="150" value="60" step="1">
+
+  <h2>特異姿勢ボタン</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="btn-secondary" onclick="setPose(0,0)">完全伸展 (θ₂=0)</button>
+    <button class="btn-secondary" onclick="setPose(0,180)">完全折込 (θ₂=180)</button>
+    <button class="btn-secondary" onclick="setPose(45,90)">最良 (θ₂=90)</button>
+  </div>
+
+  <h2>関節速度の SVD 投影</h2>
+  <p style="font-size:10px; color:#94A3B8;">v₁ または v₂ 方向の関節速度を加え、対応する EE 速度を緑矢印で表示</p>
+  <label>α (v₁ 方向) <span id="a1-val">0.0</span></label>
+  <input type="range" id="a1" min="-1.5" max="1.5" value="0" step="0.05">
+  <label>β (v₂ 方向) <span id="a2-val">0.0</span></label>
+  <input type="range" id="a2" min="-1.5" max="1.5" value="0" step="0.05">
+</div>
+
+<div id="joint-space" class="glass">
+  <div style="font-size:11px; color:#FB923C; margin-bottom:4px;">関節空間 (V 列)</div>
+  <svg id="js-svg" width="184" height="160" viewBox="0 0 184 160"></svg>
+</div>
+
+<script>
+const L1=1.5, L2=1.2;
+
+// ====== 2x2 SVD ======
+function svd2x2(J){
+  const a=J[0][0], b=J[0][1], c=J[1][0], d=J[1][1];
+  // M = J^T J
+  const m11=a*a+c*c, m12=a*b+c*d, m22=b*b+d*d;
+  const tr = m11+m22, det = m11*m22 - m12*m12;
+  const disc = Math.sqrt(Math.max(0, (m11-m22)*(m11-m22)/4 + m12*m12));
+  const lam1 = tr/2 + disc;
+  const lam2 = tr/2 - disc;
+  const s1 = Math.sqrt(Math.max(0, lam1));
+  const s2 = Math.sqrt(Math.max(0, lam2));
+  // V columns: eigenvectors of J^T J
+  let v1, v2;
+  if(Math.abs(m12) > 1e-9){
+    v1 = [m12, lam1 - m11];
+    v2 = [m12, lam2 - m11];
+  } else {
+    v1 = m11>=m22 ? [1,0] : [0,1];
+    v2 = m11>=m22 ? [0,1] : [1,0];
+  }
+  const n1 = Math.hypot(v1[0],v1[1]) || 1;
+  const n2 = Math.hypot(v2[0],v2[1]) || 1;
+  v1 = [v1[0]/n1, v1[1]/n1];
+  v2 = [v2[0]/n2, v2[1]/n2];
+  // U columns: U_i = J v_i / σ_i
+  let u1=[0,0], u2=[0,0];
+  if(s1 > 1e-9){
+    const Jv = [J[0][0]*v1[0]+J[0][1]*v1[1], J[1][0]*v1[0]+J[1][1]*v1[1]];
+    u1 = [Jv[0]/s1, Jv[1]/s1];
+  }
+  if(s2 > 1e-9){
+    const Jv = [J[0][0]*v2[0]+J[0][1]*v2[1], J[1][0]*v2[0]+J[1][1]*v2[1]];
+    u2 = [Jv[0]/s2, Jv[1]/s2];
+  } else {
+    // u2 を u1 に直交させる
+    u2 = [-u1[1], u1[0]];
+  }
+  return {s1, s2, U:[u1, u2], V:[v1, v2]};
+}
+
+// ====== Three.js ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-3, 3, 3*H/W, -3*H/W, 0.1, 100);
+camera.position.set(0, 8, 0);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.8));
+scene.add(new THREE.GridHelper(8, 16, 0x334155, 0x1E293B));
+
+const linkMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5});
+const jointMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+
+const j1 = new THREE.Mesh(new THREE.SphereGeometry(0.10, 16, 16), jointMat);
+j1.position.y = 0.05;
+scene.add(j1);
+
+const link1Group = new THREE.Group();
+scene.add(link1Group);
+const link1 = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, L1, 16), linkMat);
+link1.rotation.z = Math.PI/2; link1.position.x = L1/2; link1.position.y = 0.05;
+link1Group.add(link1);
+
+const link2Group = new THREE.Group();
+link2Group.position.x = L1; link2Group.position.y = 0.05;
+link1Group.add(link2Group);
+const j2 = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), jointMat);
+link2Group.add(j2);
+const link2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, L2, 16), linkMat);
+link2.rotation.z = Math.PI/2; link2.position.x = L2/2;
+link2Group.add(link2);
+
+const eeMat = new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.5});
+const ee = new THREE.Mesh(new THREE.SphereGeometry(0.10, 16, 16), eeMat);
+ee.position.x = L2;
+link2Group.add(ee);
+
+const svg = document.getElementById('svg-overlay');
+function setSvgSize(){ svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); }
+setSvgSize();
+
+function project(x, z){
+  const v = new THREE.Vector3(x, 0, z);
+  v.project(camera);
+  return [(v.x*0.5+0.5)*W, (-v.y*0.5+0.5)*H];
+}
+
+const state = { t1:30, t2:60, a1:0, a2:0 };
+
+function fmt(n){return (n>=0?' ':'') + n.toFixed(3);}
+function fmtMat(M){return M.map(r=>'['+r.map(fmt).join(' ')+']').join('\n');}
+
+function update(){
+  const t1 = state.t1*Math.PI/180;
+  const t2 = state.t2*Math.PI/180;
+  link1Group.rotation.y = -t1;
+  link2Group.rotation.y = -t2;
+
+  const c1=Math.cos(t1), s1=Math.sin(t1), c12=Math.cos(t1+t2), s12=Math.sin(t1+t2);
+  const J = [
+    [-L1*s1 - L2*s12, -L2*s12],
+    [ L1*c1 + L2*c12,  L2*c12]
+  ];
+  const eeX = L1*c1 + L2*c12;
+  const eeY = L1*s1 + L2*s12;
+  const eeZ = -eeY;
+
+  const sv = svd2x2(J);
+  const kappa = sv.s2 > 1e-9 ? sv.s1/sv.s2 : Infinity;
+
+  document.getElementById('J-display').textContent = fmtMat(J);
+  document.getElementById('s1-display').textContent = sv.s1.toFixed(4);
+  document.getElementById('s2-display').textContent = sv.s2.toFixed(4);
+  document.getElementById('kappa-display').textContent = isFinite(kappa) ? kappa.toFixed(2) : '∞';
+  document.getElementById('mu-display').textContent = (sv.s1*sv.s2).toFixed(4);
+  document.getElementById('U-display').textContent = fmtMat([[sv.U[0][0], sv.U[1][0]],[sv.U[0][1], sv.U[1][1]]]);
+  document.getElementById('V-display').textContent = fmtMat([[sv.V[0][0], sv.V[1][0]],[sv.V[0][1], sv.V[1][1]]]);
+  document.getElementById('sing-display').innerHTML =
+    sv.s2 < 0.05 ? '<span style="color:#EF4444; font-weight:bold;">⚠ 特異 (σ₂≈0)</span>' :
+    kappa > 50 ? '<span style="color:#F59E0B;">⚠ 条件数大</span>' :
+    '<span style="color:#22C55E;">✓ 正常</span>';
+
+  drawSVG(eeX, eeZ, sv);
+  drawJointSpace(sv);
+}
+
+function drawSVG(eeX, eeZ, sv){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+  [['cyan','#22D3EE'], ['purple','#A855F7'], ['green','#22C55E']].forEach(([id,c])=>{
+    const m = document.createElementNS('http://www.w3.org/2000/svg','marker');
+    m.setAttribute('id',id+'-arr'); m.setAttribute('viewBox','0 0 10 10');
+    m.setAttribute('refX','8'); m.setAttribute('refY','5');
+    m.setAttribute('markerWidth','5'); m.setAttribute('markerHeight','5');
+    m.setAttribute('orient','auto-start-reverse');
+    const p = document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d','M0,0 L10,5 L0,10 Z'); p.setAttribute('fill', c);
+    m.appendChild(p); defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  const [eeSx, eeSy] = project(eeX, eeZ);
+  const [s1Sx, s1Sy] = project(eeX+0.01, eeZ);
+  const pxScale = Math.hypot(s1Sx-eeSx, s1Sy-eeSy) * 100;
+
+  // U_1 (σ_1 方向、最大可動)
+  const drawArrow = (dx, dy, color, label, scale)=>{
+    const ex = eeX + dx*scale, ez = eeZ - dy*scale;
+    const [tx, ty] = project(ex, ez);
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1', eeSx); ln.setAttribute('y1', eeSy);
+    ln.setAttribute('x2', tx); ln.setAttribute('y2', ty);
+    ln.setAttribute('stroke', color); ln.setAttribute('stroke-width','3');
+    ln.setAttribute('marker-end', `url(#${color==='#22D3EE'?'cyan':color==='#A855F7'?'purple':'green'}-arr)`);
+    svg.appendChild(ln);
+
+    const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+    txt.setAttribute('x', tx+6); txt.setAttribute('y', ty);
+    txt.setAttribute('fill', color); txt.setAttribute('font-size','11');
+    txt.setAttribute('font-family','monospace');
+    txt.textContent = label;
+    svg.appendChild(txt);
+  };
+
+  // U列 × σ で楕円体
+  if(sv.s1 > 0.01){
+    drawArrow(sv.U[0][0]*sv.s1, sv.U[0][1]*sv.s1, '#22D3EE', `σ₁u₁`, 0.4);
+  }
+  if(sv.s2 > 0.01){
+    drawArrow(sv.U[1][0]*sv.s2, sv.U[1][1]*sv.s2, '#A855F7', `σ₂u₂`, 0.4);
+  }
+
+  // 楕円体（破線）
+  const ang = Math.atan2(sv.U[0][1], sv.U[0][0]) * 180/Math.PI;
+  const ell = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+  ell.setAttribute('cx', eeSx); ell.setAttribute('cy', eeSy);
+  ell.setAttribute('rx', Math.max(2, sv.s1*0.4*pxScale));
+  ell.setAttribute('ry', Math.max(2, sv.s2*0.4*pxScale));
+  ell.setAttribute('transform', `rotate(${-ang} ${eeSx} ${eeSy})`);
+  ell.setAttribute('fill','rgba(251,146,60,0.10)');
+  ell.setAttribute('stroke','#FB923C'); ell.setAttribute('stroke-width','1.5');
+  ell.setAttribute('stroke-dasharray','4 3');
+  svg.appendChild(ell);
+
+  // 関節速度応答 V_proj
+  const a1 = state.a1, a2 = state.a2;
+  if(Math.abs(a1)+Math.abs(a2) > 0.05){
+    // 関節速度 dθ = a1*v1 + a2*v2
+    const dth = [a1*sv.V[0][0] + a2*sv.V[1][0], a1*sv.V[0][1] + a2*sv.V[1][1]];
+    // EE 速度 dx = J dθ
+    const J = [
+      [-L1*Math.sin(state.t1*Math.PI/180) - L2*Math.sin((state.t1+state.t2)*Math.PI/180), -L2*Math.sin((state.t1+state.t2)*Math.PI/180)],
+      [L1*Math.cos(state.t1*Math.PI/180) + L2*Math.cos((state.t1+state.t2)*Math.PI/180), L2*Math.cos((state.t1+state.t2)*Math.PI/180)]
+    ];
+    const dx = [J[0][0]*dth[0]+J[0][1]*dth[1], J[1][0]*dth[0]+J[1][1]*dth[1]];
+    drawArrow(dx[0], dx[1], '#22C55E', `ẋ=Jθ̇`, 0.4);
+  }
+}
+
+function drawJointSpace(sv){
+  const jsvg = document.getElementById('js-svg');
+  while(jsvg.firstChild) jsvg.removeChild(jsvg.firstChild);
+  const cx = 92, cy = 80;
+
+  // 軸
+  const axL = (x1,y1,x2,y2,c)=>{
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1); l.setAttribute('y1',y1); l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+    l.setAttribute('stroke',c); l.setAttribute('stroke-width','1');
+    jsvg.appendChild(l);
+  };
+  axL(cx-60, cy, cx+60, cy, '#475569');
+  axL(cx, cy-60, cx, cy+60, '#475569');
+
+  const lblX = document.createElementNS('http://www.w3.org/2000/svg','text');
+  lblX.setAttribute('x', cx+62); lblX.setAttribute('y', cy+4);
+  lblX.setAttribute('fill','#94A3B8'); lblX.setAttribute('font-size','9');
+  lblX.textContent = 'θ̇₁'; jsvg.appendChild(lblX);
+  const lblY = document.createElementNS('http://www.w3.org/2000/svg','text');
+  lblY.setAttribute('x', cx-12); lblY.setAttribute('y', cy-62);
+  lblY.setAttribute('fill','#94A3B8'); lblY.setAttribute('font-size','9');
+  lblY.textContent = 'θ̇₂'; jsvg.appendChild(lblY);
+
+  // 単位円
+  const c0 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c0.setAttribute('cx',cx); c0.setAttribute('cy',cy); c0.setAttribute('r','50');
+  c0.setAttribute('fill','none'); c0.setAttribute('stroke','#334155'); c0.setAttribute('stroke-dasharray','2 3');
+  jsvg.appendChild(c0);
+
+  // V_1
+  const drawV = (v, color, label)=>{
+    const ex = cx + v[0]*50, ey = cy - v[1]*50;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',cx); ln.setAttribute('y1',cy); ln.setAttribute('x2',ex); ln.setAttribute('y2',ey);
+    ln.setAttribute('stroke',color); ln.setAttribute('stroke-width','2.5');
+    jsvg.appendChild(ln);
+    const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+    txt.setAttribute('x',ex+3); txt.setAttribute('y',ey);
+    txt.setAttribute('fill',color); txt.setAttribute('font-size','10');
+    txt.setAttribute('font-family','monospace');
+    txt.textContent = label;
+    jsvg.appendChild(txt);
+  };
+  drawV(sv.V[0], '#22D3EE', 'v₁');
+  drawV(sv.V[1], '#A855F7', 'v₂');
+
+  // 入力ベクトル (a1*v1 + a2*v2)
+  if(Math.abs(state.a1)+Math.abs(state.a2) > 0.05){
+    const dth = [state.a1*sv.V[0][0] + state.a2*sv.V[1][0], state.a1*sv.V[0][1] + state.a2*sv.V[1][1]];
+    drawV(dth, '#22C55E', 'θ̇');
+  }
+}
+
+['t1','t2','a1','a2'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent =
+      ['t1','t2'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+    update();
+  });
+});
+
+function setPose(t1, t2){
+  state.t1 = t1; state.t2 = t2;
+  document.getElementById('t1').value = t1; document.getElementById('t2').value = t2;
+  document.getElementById('t1-val').textContent = t1+'°';
+  document.getElementById('t2-val').textContent = t2+'°';
+  update();
+}
+function resetState(){
+  Object.assign(state, {t1:30, t2:60, a1:0, a2:0});
+  ['t1','t2','a1','a2'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent =
+      ['t1','t2'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+  });
+  update();
+}
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-3; camera.right=3; camera.top=3*H/W; camera.bottom=-3*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  setSvgSize();
+  update();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; right:50%; transform:translateX(50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.5 SVD Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

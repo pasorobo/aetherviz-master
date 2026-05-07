@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.7 Stewart Platform — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:380px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .leg-row { display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px dotted #334155; }
+  .leg-bad { color:#EF4444; font-weight:bold; }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.7</span>
+    <span style="font-weight:600;">Stewart Platform / 6-UPS パラレル機構</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Hexapod</span>
+  </div>
+  <div>
+    <button onclick="resetPose()">姿勢リセット</button>
+    <button onclick="autoMotion()" id="auto-btn" class="btn-success">▶ 自動運動</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ パラレル機構の基本（直列との対比）を理解</li>
+    <li>□ Stewart プラットフォームの逆運動学（解析的）を導出</li>
+    <li>□ 6 本の脚長に対するワークスペース制約を識別</li>
+    <li>□ 順運動学が困難（数値解必要）であることを実感</li>
+  </ul>
+
+  <h2>逆運動学</h2>
+  <div>$$ \mathbf{p}_i = T_{sp}\,\mathbf{p}_i^{(0)} $$</div>
+  <div>$$ L_i = \|\mathbf{p}_i - \mathbf{b}_i\| $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">
+    各脚の長さは <strong>top アンカー位置 - base アンカー位置</strong> のノルム。<br>
+    pose (x,y,z,φ,θ,ψ) → 6 個の脚長 (L₁..L₆) は<strong>陽に解析可能</strong>。
+  </p>
+
+  <h2>順運動学（参考）</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    与えられた L₁..L₆ から pose を求めるのは<strong>非線形連立方程式</strong>で解析解なし。<br>
+    Newton-Raphson 等で数値解。
+  </p>
+
+  <h2>Grübler 検算</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    N=14 リンク（base、top、6 脚×2 セグメント）<br>
+    J = 6 U + 6 P + 6 S = 18 ジョイント（自由度: U=2, P=1, S=3）<br>
+    DoF = 6(14−1−18) + (12 + 6 + 18) = -30 + 36 = <strong>6</strong>
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>姿勢</h2>
+  <div class="matrix" id="pose-display"></div>
+  <h2>脚長 (m)</h2>
+  <div id="legs-display"></div>
+  <h2>ワークスペース判定</h2>
+  <div id="ws-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>並進</h2>
+  <label>x <span id="x-val">0.0</span></label>
+  <input type="range" id="x" min="-0.4" max="0.4" value="0" step="0.01">
+  <label>y <span id="y-val">0.0</span></label>
+  <input type="range" id="y" min="-0.4" max="0.4" value="0" step="0.01">
+  <label>z <span id="z-val">1.5</span></label>
+  <input type="range" id="z" min="0.8" max="2.2" value="1.5" step="0.01">
+
+  <h2>回転 (deg)</h2>
+  <label>roll φ <span id="rx-val">0</span></label>
+  <input type="range" id="rx" min="-30" max="30" value="0" step="1">
+  <label>pitch θ <span id="ry-val">0</span></label>
+  <input type="range" id="ry" min="-30" max="30" value="0" step="1">
+  <label>yaw ψ <span id="rz-val">0</span></label>
+  <input type="range" id="rz" min="-30" max="30" value="0" step="1">
+
+  <h2>幾何</h2>
+  <label>ベース半径 r_b <span id="rb-val">0.8</span></label>
+  <input type="range" id="rb" min="0.3" max="1.5" value="0.8" step="0.05">
+  <label>トップ半径 r_p <span id="rp-val">0.5</span></label>
+  <input type="range" id="rp" min="0.2" max="1.0" value="0.5" step="0.05">
+</div>
+
+<script>
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0F172A, 6, 25);
+
+let W=window.innerWidth, H=window.innerHeight;
+const camera = new THREE.PerspectiveCamera(55, W/H, 0.1, 100);
+camera.position.set(3.5, 2.0, 3.0);
+camera.lookAt(0, 0.7, 0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x6366F1, 0x0F172A, 0.55));
+const dirL = new THREE.DirectionalLight(0xffffff, 0.7);
+dirL.position.set(5, 8, 4); scene.add(dirL);
+scene.add(new THREE.GridHelper(8, 16, 0x334155, 0x1E293B));
+
+// 簡易 OrbitControls
+let azimuth = Math.atan2(camera.position.x, camera.position.z);
+let polar = Math.acos((camera.position.y - 0.7) / Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z));
+let radius = Math.hypot(camera.position.x, camera.position.y-0.7, camera.position.z);
+const target = new THREE.Vector3(0, 0.7, 0);
+let drag=false, lx=0, ly=0;
+function uc(){
+  camera.position.x = target.x + radius*Math.sin(polar)*Math.sin(azimuth);
+  camera.position.y = target.y + radius*Math.cos(polar);
+  camera.position.z = target.z + radius*Math.sin(polar)*Math.cos(azimuth);
+  camera.lookAt(target);
+}
+renderer.domElement.addEventListener('mousedown', e=>{drag=true; lx=e.clientX; ly=e.clientY;});
+window.addEventListener('mouseup', ()=>drag=false);
+window.addEventListener('mousemove', e=>{
+  if(!drag) return;
+  azimuth -= (e.clientX-lx)*0.005;
+  polar = Math.max(0.1, Math.min(Math.PI-0.1, polar - (e.clientY-ly)*0.005));
+  lx=e.clientX; ly=e.clientY; uc();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  radius = Math.max(2, Math.min(20, radius + e.deltaY*0.001*radius));
+  uc(); e.preventDefault();
+}, {passive:false});
+
+// ====== Stewart Platform ======
+const state = { x:0, y:0, z:1.5, rx:0, ry:0, rz:0, rb:0.8, rp:0.5 };
+const LEG_MIN = 0.8, LEG_MAX = 2.5;
+
+// アンカー点（ベース、トップ）
+function getAnchors(){
+  // ベース: 60°おきにペアで配置（実 Stewart は 3 ペア）
+  const baseAngles = [0, 60, 120, 180, 240, 300].map(a=>a*Math.PI/180);
+  // 各ペアのオフセット (ベースは少しオフセットあり)
+  const baseOffsetA = [-15, 15, 105, 135, 225, 255].map(a=>a*Math.PI/180);
+  const topOffsetA  = [-45, 45, 75, 165, 195, 285].map(a=>a*Math.PI/180);
+  const base = baseOffsetA.map(a => [state.rb*Math.cos(a), 0, state.rb*Math.sin(a)]);
+  const top  = topOffsetA.map(a => [state.rp*Math.cos(a), 0, state.rp*Math.sin(a)]);
+  return {base, top};
+}
+
+// 回転行列（XYZ オイラー、deg → rad）
+function rotMat(rx, ry, rz){
+  const cx=Math.cos(rx), sx=Math.sin(rx);
+  const cy=Math.cos(ry), sy=Math.sin(ry);
+  const cz=Math.cos(rz), sz=Math.sin(rz);
+  // Rz Ry Rx 順
+  return [
+    [cy*cz,  sx*sy*cz-cx*sz,  cx*sy*cz+sx*sz],
+    [cy*sz,  sx*sy*sz+cx*cz,  cx*sy*sz-sx*cz],
+    [-sy,    sx*cy,           cx*cy]
+  ];
+}
+
+function applyT(R, p, v){
+  return [R[0][0]*v[0]+R[0][1]*v[1]+R[0][2]*v[2]+p[0],
+          R[1][0]*v[0]+R[1][1]*v[1]+R[1][2]*v[2]+p[1],
+          R[2][0]*v[0]+R[2][1]*v[1]+R[2][2]*v[2]+p[2]];
+}
+
+// ====== 構築 ======
+const baseGroup = new THREE.Group();
+scene.add(baseGroup);
+const topGroup = new THREE.Group();
+scene.add(topGroup);
+const legsGroup = new THREE.Group();
+scene.add(legsGroup);
+
+const baseMat = new THREE.MeshStandardMaterial({color:0x475569, metalness:0.6});
+const topMat = new THREE.MeshStandardMaterial({color:0x6366F1, metalness:0.6});
+const anchorMat = new THREE.MeshStandardMaterial({color:0xFACC15});
+const legMat = new THREE.MeshStandardMaterial({color:0x94A3B8, metalness:0.5});
+const legBadMat = new THREE.MeshStandardMaterial({color:0xEF4444, emissive:0xEF4444, emissiveIntensity:0.3});
+
+function rebuild(){
+  while(baseGroup.children.length) baseGroup.remove(baseGroup.children[0]);
+  while(topGroup.children.length) topGroup.remove(topGroup.children[0]);
+  while(legsGroup.children.length) legsGroup.remove(legsGroup.children[0]);
+
+  const {base, top} = getAnchors();
+
+  // ベースプレート（円盤）
+  const basePlate = new THREE.Mesh(new THREE.CylinderGeometry(state.rb*1.05, state.rb*1.05, 0.05, 32), baseMat);
+  basePlate.position.y = -0.025;
+  baseGroup.add(basePlate);
+  base.forEach(b=>{
+    const a = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 12), anchorMat);
+    a.position.set(b[0], b[1], b[2]);
+    baseGroup.add(a);
+  });
+
+  // トッププレート
+  const topPlate = new THREE.Mesh(new THREE.CylinderGeometry(state.rp*1.05, state.rp*1.05, 0.05, 32), topMat);
+  topGroup.add(topPlate);
+  top.forEach(t=>{
+    const a = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), anchorMat);
+    a.position.set(t[0], t[1], t[2]);
+    topGroup.add(a);
+  });
+
+  // pose 適用
+  const R = rotMat(state.rx*Math.PI/180, state.ry*Math.PI/180, state.rz*Math.PI/180);
+  const p = [state.x, state.z, state.y];  // Three.js y-up なので z(world) → y(scene)
+  topGroup.position.set(p[0], p[1], p[2]);
+  topGroup.rotation.set(state.rx*Math.PI/180, state.rz*Math.PI/180, state.ry*Math.PI/180);
+
+  // 脚を計算して描画
+  const legLengths = [];
+  const wsOK = [];
+  for(let i=0;i<6;i++){
+    const tWorld = applyT(R, p, top[i]);
+    const len = Math.hypot(tWorld[0]-base[i][0], tWorld[1]-base[i][1], tWorld[2]-base[i][2]);
+    legLengths.push(len);
+    const ok = len >= LEG_MIN && len <= LEG_MAX;
+    wsOK.push(ok);
+
+    // 円柱（脚）
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, len, 12), ok ? legMat : legBadMat);
+    cyl.position.set((tWorld[0]+base[i][0])/2, (tWorld[1]+base[i][1])/2, (tWorld[2]+base[i][2])/2);
+    // 回転：y 軸を base→tip に向ける
+    const dir = new THREE.Vector3(tWorld[0]-base[i][0], tWorld[1]-base[i][1], tWorld[2]-base[i][2]).normalize();
+    const axis = new THREE.Vector3(0,1,0).cross(dir).normalize();
+    const ang = Math.acos(new THREE.Vector3(0,1,0).dot(dir));
+    cyl.quaternion.setFromAxisAngle(axis, ang);
+    legsGroup.add(cyl);
+  }
+
+  // HUD 更新
+  document.getElementById('pose-display').textContent =
+    `(${state.x.toFixed(2)}, ${state.y.toFixed(2)}, ${state.z.toFixed(2)})\n` +
+    `RPY = (${state.rx}°, ${state.ry}°, ${state.rz}°)`;
+
+  let html = '';
+  for(let i=0;i<6;i++){
+    const cls = wsOK[i] ? '' : 'leg-bad';
+    html += `<div class="leg-row ${cls}"><span>L${i+1}</span><span>${legLengths[i].toFixed(3)} m</span></div>`;
+  }
+  document.getElementById('legs-display').innerHTML = html;
+
+  const allOK = wsOK.every(x=>x);
+  document.getElementById('ws-display').innerHTML = allOK
+    ? `<span style="color:#22C55E;">✓ 全脚 ${LEG_MIN}-${LEG_MAX}m 範囲内</span>`
+    : `<span style="color:#EF4444;">⚠ ${wsOK.filter(x=>!x).length} 脚が範囲外</span>`;
+}
+
+// 回転に関しては Three.js で直接適用したいので簡略化のため
+// topGroup.rotation を Euler で設定（オーダーに注意）
+function update(){
+  const R = rotMat(state.rx*Math.PI/180, state.ry*Math.PI/180, state.rz*Math.PI/180);
+  rebuild();
+}
+
+// ====== UI ======
+['x','y','z','rx','ry','rz','rb','rp'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+    update();
+  });
+});
+
+function resetPose(){
+  Object.assign(state, {x:0, y:0, z:1.5, rx:0, ry:0, rz:0});
+  ['x','y','z','rx','ry','rz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id]+'°' : state[id].toFixed(2);
+  });
+  update();
+}
+
+let autoOn = false;
+function autoMotion(){
+  autoOn = !autoOn;
+  document.getElementById('auto-btn').textContent = autoOn ? '⏸ 停止' : '▶ 自動運動';
+  if(autoOn) tick();
+}
+function tick(){
+  if(!autoOn) return;
+  const t = performance.now()/1000;
+  state.x = 0.2 * Math.cos(t*0.5);
+  state.y = 0.2 * Math.sin(t*0.5);
+  state.z = 1.5 + 0.15 * Math.sin(t*0.7);
+  state.rx = 15 * Math.sin(t*0.4);
+  state.ry = 15 * Math.cos(t*0.6);
+  state.rz = 10 * Math.sin(t*0.3);
+  ['x','y','z','rx','ry','rz'].forEach(id=>{
+    document.getElementById(id).value = state[id];
+    document.getElementById(id+'-val').textContent =
+      ['rx','ry','rz'].includes(id) ? state[id].toFixed(0)+'°' : state[id].toFixed(2);
+  });
+  update();
+  requestAnimationFrame(tick);
+}
+
+function animate(){ requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.aspect = W/H; camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.7 Stewart Platform · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

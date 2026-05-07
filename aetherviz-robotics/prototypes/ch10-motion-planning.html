@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.10 Motion Planning (RRT) — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #svg-overlay { position:absolute; inset:0; z-index:2; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+  .mode-btn { background:rgba(255,255,255,0.08); }
+  .mode-btn.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<svg id="svg-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.10</span>
+    <span style="font-weight:600;">Motion Planning (RRT) / 運動計画</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Sampling-Based Planner</span>
+  </div>
+  <div>
+    <button onclick="resetWorld()">世界リセット</button>
+    <button onclick="resetTree()" class="btn-secondary">木のみリセット</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ コンフィギュレーション空間 C と障害物 C_obs を理解する</li>
+    <li>□ サンプリングベース計画 (RRT) のアルゴリズムを追う</li>
+    <li>□ 確率的完全性 (probabilistic completeness) を実感する</li>
+  </ul>
+
+  <h2>RRT アルゴリズム</h2>
+  <div class="matrix" style="font-size:10px;">
+T = {q_start}
+while iter &lt; max:
+  q_rand ← sample()
+       (with prob p_goal: q_rand=q_goal)
+  q_near ← nearest(T, q_rand)
+  q_new  ← steer(q_near, q_rand, ε)
+  if collision_free(q_near, q_new):
+    add q_new to T (parent: q_near)
+    if dist(q_new, q_goal) &lt; tol:
+      return path(q_new)</div>
+
+  <h2>使い方</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    モードを選択し、キャンバス上をクリック。<br>
+    1. <strong>start</strong> 設定<br>
+    2. <strong>goal</strong> 設定<br>
+    3. <strong>obstacle</strong>：左ドラッグで矩形配置<br>
+    4. 「計画」で RRT 実行
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>状態</h2>
+  <div>start: <span id="start-readout">未設定</span></div>
+  <div>goal:  <span id="goal-readout">未設定</span></div>
+  <div>障害物: <span id="obs-count">0</span> 個</div>
+  <div style="margin-top:6px;">木のノード数: <span id="node-count">1</span></div>
+  <div>反復回数: <span id="iter-count">0</span></div>
+  <div>状態: <span id="status">待機</span></div>
+  <div style="margin-top:6px;">パス長: <span id="path-len">-</span></div>
+</div>
+
+<div class="panel glass">
+  <h2>編集モード</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="mode-btn active" data-mode="start" onclick="setMode('start')">start</button>
+    <button class="mode-btn" data-mode="goal" onclick="setMode('goal')">goal</button>
+    <button class="mode-btn" data-mode="obstacle" onclick="setMode('obstacle')">obstacle</button>
+  </div>
+
+  <h2>パラメータ</h2>
+  <label>step size ε <span id="eps-val">0.30</span></label>
+  <input type="range" id="eps" min="0.05" max="1.0" value="0.3" step="0.01">
+  <label>goal bias p_goal <span id="pgoal-val">0.10</span></label>
+  <input type="range" id="pgoal" min="0" max="0.5" value="0.10" step="0.01">
+  <label>最大反復 <span id="maxiter-val">2000</span></label>
+  <input type="range" id="maxiter" min="100" max="10000" value="2000" step="100">
+
+  <h2>実行</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button onclick="runRRT(true)" class="btn-success">計画 (一気に)</button>
+    <button onclick="stepRRT()" class="btn-secondary">1 ステップ</button>
+    <button onclick="runRRT(false)" class="btn-secondary">アニメーション</button>
+  </div>
+  <div style="margin-top:6px;">
+    <button onclick="loadDemo()" class="btn-secondary">デモシーン</button>
+  </div>
+</div>
+
+<script>
+// ====== Three.js (背景とグリッドのみ) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+// ワールド範囲: x ∈ [-5,5], y ∈ [-3,3] (アスペクトに依存)
+const WX = 5, WY = 5*H/W;
+const camera = new THREE.OrthographicCamera(-WX, WX, WY, -WY, 0.1, 100);
+camera.position.set(0, 0, 8);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const grid = new THREE.GridHelper(20, 40, 0x334155, 0x1E293B);
+grid.rotation.x = Math.PI/2;
+scene.add(grid);
+
+// 障害物の Three.js メッシュ
+const obstacleGroup = new THREE.Group();
+scene.add(obstacleGroup);
+const obstacleMat = new THREE.MeshBasicMaterial({color:0xDC2626, transparent:true, opacity:0.5, side:THREE.DoubleSide});
+
+function rebuildObstacles(){
+  while(obstacleGroup.children.length) obstacleGroup.remove(obstacleGroup.children[0]);
+  for(const o of state.obstacles){
+    const geom = new THREE.PlaneGeometry(o.w, o.h);
+    const mesh = new THREE.Mesh(geom, obstacleMat);
+    mesh.position.set(o.cx, o.cy, 0);
+    obstacleGroup.add(mesh);
+  }
+}
+
+// ====== ピクセル ↔ ワールド座標 ======
+const svg = document.getElementById('svg-overlay');
+function setSvgSize(){
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+}
+setSvgSize();
+
+function pxToWorld(px, py){
+  const ndcX = (px/W)*2 - 1;
+  const ndcY = -((py/H)*2 - 1);
+  return [ndcX * WX, ndcY * WY];
+}
+function worldToPx(wx, wy){
+  return [(wx/WX*0.5 + 0.5)*W, (-wy/WY*0.5 + 0.5)*H];
+}
+
+// ====== 状態 ======
+const state = {
+  mode: 'start',
+  start: null,
+  goal: null,
+  obstacles: [],
+  tree: [],   // {q:[x,y], parent:idx}
+  path: null,
+  iter: 0,
+  eps: 0.3,
+  pgoal: 0.10,
+  maxiter: 2000,
+  status: '待機'
+};
+
+function setMode(m){
+  state.mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.mode === m);
+  });
+}
+
+// ====== 衝突判定 ======
+function pointInObstacle(p){
+  for(const o of state.obstacles){
+    if(p[0] >= o.cx-o.w/2 && p[0] <= o.cx+o.w/2 &&
+       p[1] >= o.cy-o.h/2 && p[1] <= o.cy+o.h/2) return true;
+  }
+  return false;
+}
+
+function segmentCollides(p1, p2){
+  // 細かくサンプルしてチェック
+  const dx = p2[0]-p1[0], dy = p2[1]-p1[1];
+  const len = Math.hypot(dx, dy);
+  const nSteps = Math.max(2, Math.ceil(len/0.05));
+  for(let i=0;i<=nSteps;i++){
+    const t = i/nSteps;
+    if(pointInObstacle([p1[0]+t*dx, p1[1]+t*dy])) return true;
+  }
+  return false;
+}
+
+// ====== RRT ======
+function dist(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function nearest(tree, q){
+  let best=0, bd=Infinity;
+  for(let i=0;i<tree.length;i++){
+    const d = dist(tree[i].q, q);
+    if(d < bd){ bd=d; best=i; }
+  }
+  return best;
+}
+function steer(qFrom, qTo, eps){
+  const dx = qTo[0]-qFrom[0], dy = qTo[1]-qFrom[1];
+  const d = Math.hypot(dx, dy);
+  if(d <= eps) return qTo.slice();
+  return [qFrom[0] + dx/d*eps, qFrom[1] + dy/d*eps];
+}
+
+function stepRRT(){
+  if(!state.start || !state.goal){
+    alert('start と goal を設定してください');
+    return false;
+  }
+  if(state.tree.length === 0){
+    state.tree.push({q: state.start.slice(), parent:-1});
+  }
+
+  let qrand;
+  if(Math.random() < state.pgoal){
+    qrand = state.goal.slice();
+  } else {
+    qrand = [(Math.random()*2-1)*WX, (Math.random()*2-1)*WY];
+  }
+  const idxNear = nearest(state.tree, qrand);
+  const qNear = state.tree[idxNear].q;
+  const qNew = steer(qNear, qrand, state.eps);
+  if(pointInObstacle(qNew) || segmentCollides(qNear, qNew)){
+    state.iter++;
+    return false;
+  }
+  state.tree.push({q: qNew, parent: idxNear});
+  state.iter++;
+
+  // ゴール接続チェック
+  if(dist(qNew, state.goal) < state.eps){
+    if(!segmentCollides(qNew, state.goal)){
+      state.tree.push({q: state.goal.slice(), parent: state.tree.length-1});
+      buildPath(state.tree.length-1);
+      state.status = '✓ 解発見';
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildPath(endIdx){
+  const path = [];
+  let i = endIdx;
+  while(i !== -1){
+    path.push(state.tree[i].q);
+    i = state.tree[i].parent;
+  }
+  path.reverse();
+  state.path = path;
+  // 経路長
+  let len = 0;
+  for(let k=1;k<path.length;k++) len += dist(path[k-1], path[k]);
+  document.getElementById('path-len').textContent = len.toFixed(3);
+}
+
+function runRRT(immediate){
+  if(!state.start || !state.goal) { alert('start と goal を設定してください'); return; }
+  if(immediate){
+    state.status = '実行中...';
+    const startTime = performance.now();
+    while(state.iter < state.maxiter){
+      if(stepRRT()) break;
+    }
+    if(!state.path) state.status = `✗ 失敗 (${state.iter} 反復)`;
+    else state.status = `✓ 解発見 (${state.iter} 反復, ${(performance.now()-startTime).toFixed(0)}ms)`;
+    drawTree();
+    updateHUD();
+  } else {
+    state.status = 'アニメーション中...';
+    const animStep = ()=>{
+      // 1 フレームに 5 ステップ
+      let found = false;
+      for(let k=0;k<5;k++){
+        if(state.iter >= state.maxiter) break;
+        if(stepRRT()){ found=true; break; }
+      }
+      drawTree(); updateHUD();
+      if(!found && state.iter < state.maxiter && !state.path){
+        requestAnimationFrame(animStep);
+      } else {
+        if(!state.path) state.status = `✗ 失敗 (${state.iter} 反復)`;
+        else state.status = `✓ 解発見 (${state.iter} 反復)`;
+        updateHUD();
+      }
+    };
+    animStep();
+  }
+}
+
+// ====== SVG 描画 ======
+function drawTree(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // 木のエッジ
+  for(let i=1;i<state.tree.length;i++){
+    const node = state.tree[i];
+    const parent = state.tree[node.parent];
+    const [x1,y1] = worldToPx(parent.q[0], parent.q[1]);
+    const [x2,y2] = worldToPx(node.q[0], node.q[1]);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',x1); line.setAttribute('y1',y1);
+    line.setAttribute('x2',x2); line.setAttribute('y2',y2);
+    line.setAttribute('stroke','#06B6D4'); line.setAttribute('stroke-width','1');
+    line.setAttribute('opacity','0.55');
+    svg.appendChild(line);
+  }
+
+  // ノード
+  for(const node of state.tree){
+    const [x,y] = worldToPx(node.q[0], node.q[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','1.5');
+    c.setAttribute('fill','#22D3EE');
+    svg.appendChild(c);
+  }
+
+  // パス
+  if(state.path){
+    const pts = state.path.map(p=>worldToPx(p[0], p[1]));
+    const pl = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    pl.setAttribute('points', pts.map(p=>p[0]+','+p[1]).join(' '));
+    pl.setAttribute('stroke','#FBBF24'); pl.setAttribute('stroke-width','3');
+    pl.setAttribute('fill','none'); pl.setAttribute('stroke-linejoin','round');
+    svg.appendChild(pl);
+  }
+
+  // start / goal
+  if(state.start){
+    const [x,y] = worldToPx(state.start[0], state.start[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','9');
+    c.setAttribute('fill','#22C55E'); c.setAttribute('stroke','white'); c.setAttribute('stroke-width','2');
+    svg.appendChild(c);
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x',x+12); t.setAttribute('y',y+4); t.setAttribute('fill','#22C55E');
+    t.setAttribute('font-size','12'); t.setAttribute('font-family','monospace'); t.textContent='S';
+    svg.appendChild(t);
+  }
+  if(state.goal){
+    const [x,y] = worldToPx(state.goal[0], state.goal[1]);
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r','9');
+    c.setAttribute('fill','#EF4444'); c.setAttribute('stroke','white'); c.setAttribute('stroke-width','2');
+    svg.appendChild(c);
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x',x+12); t.setAttribute('y',y+4); t.setAttribute('fill','#EF4444');
+    t.setAttribute('font-size','12'); t.setAttribute('font-family','monospace'); t.textContent='G';
+    svg.appendChild(t);
+  }
+}
+
+function updateHUD(){
+  document.getElementById('start-readout').textContent = state.start ? `(${state.start[0].toFixed(2)}, ${state.start[1].toFixed(2)})` : '未設定';
+  document.getElementById('goal-readout').textContent = state.goal ? `(${state.goal[0].toFixed(2)}, ${state.goal[1].toFixed(2)})` : '未設定';
+  document.getElementById('obs-count').textContent = state.obstacles.length;
+  document.getElementById('node-count').textContent = state.tree.length;
+  document.getElementById('iter-count').textContent = state.iter;
+  document.getElementById('status').textContent = state.status;
+}
+
+// ====== マウス入力 ======
+let dragStart = null;
+let dragRect = null;
+renderer.domElement.addEventListener('mousedown', e=>{
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const [wx, wy] = pxToWorld(px, py);
+  if(state.mode === 'start'){
+    state.start = [wx, wy]; resetTree();
+  } else if(state.mode === 'goal'){
+    state.goal = [wx, wy]; resetTree();
+  } else if(state.mode === 'obstacle'){
+    dragStart = [wx, wy];
+  }
+  drawTree(); updateHUD();
+});
+renderer.domElement.addEventListener('mousemove', e=>{
+  if(state.mode !== 'obstacle' || !dragStart) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const [wx, wy] = pxToWorld(px, py);
+  const [x1,y1] = worldToPx(dragStart[0], dragStart[1]);
+  const [x2,y2] = worldToPx(wx, wy);
+  if(dragRect) svg.removeChild(dragRect);
+  dragRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  dragRect.setAttribute('x', Math.min(x1,x2)); dragRect.setAttribute('y', Math.min(y1,y2));
+  dragRect.setAttribute('width', Math.abs(x2-x1)); dragRect.setAttribute('height', Math.abs(y2-y1));
+  dragRect.setAttribute('fill','rgba(220,38,38,0.4)'); dragRect.setAttribute('stroke','#DC2626');
+  svg.appendChild(dragRect);
+});
+renderer.domElement.addEventListener('mouseup', e=>{
+  if(state.mode !== 'obstacle' || !dragStart) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const [wx, wy] = pxToWorld(px, py);
+  const cx = (dragStart[0]+wx)/2, cy = (dragStart[1]+wy)/2;
+  const w = Math.abs(wx - dragStart[0]), h = Math.abs(wy - dragStart[1]);
+  if(w > 0.05 && h > 0.05){
+    state.obstacles.push({cx, cy, w, h});
+    rebuildObstacles();
+  }
+  if(dragRect){ svg.removeChild(dragRect); dragRect=null; }
+  dragStart = null;
+  drawTree(); updateHUD();
+});
+
+['eps','pgoal','maxiter'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[id].toFixed(id==='maxiter'?0:2);
+  });
+});
+
+function resetWorld(){
+  state.start = null; state.goal = null; state.obstacles = [];
+  resetTree();
+  rebuildObstacles();
+  drawTree(); updateHUD();
+}
+
+function resetTree(){
+  state.tree = []; state.path = null; state.iter = 0;
+  state.status = '待機';
+  document.getElementById('path-len').textContent = '-';
+  drawTree(); updateHUD();
+}
+
+function loadDemo(){
+  state.start = [-3.5, -1.5];
+  state.goal = [3.5, 1.5];
+  state.obstacles = [
+    {cx:-1.5, cy:0.5, w:1.2, h:2.0},
+    {cx:0,   cy:-1.5, w:2.5, h:0.8},
+    {cx:1.8, cy:1.2, w:1.0, h:1.5},
+    {cx:-3,  cy:1.5, w:1.0, h:0.6}
+  ];
+  resetTree();
+  rebuildObstacles();
+  drawTree(); updateHUD();
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  const NWY = WX*H/W;
+  camera.left=-WX; camera.right=WX; camera.top=NWY; camera.bottom=-NWY;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  setSvgSize();
+  drawTree();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+});
+
+updateHUD();
+loadDemo();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.10 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ch.9 Trajectory Generation — AetherViz Robotics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<style>
+  body { margin:0; font-family:'Inter','Hiragino Sans',sans-serif; background:linear-gradient(180deg,#0B1120,#1E293B,#0F172A); color:#F1F5F9; overflow:hidden; }
+  #canvas-container { position:absolute; inset:0; }
+  #plots { position:fixed; top:80px; left:370px; right:370px; bottom:200px; z-index:3; padding:10px; }
+  .glass { background:rgba(15,23,42,0.78); border:1px solid rgba(99,102,241,0.35); backdrop-filter:blur(10px); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+  .nav { position:fixed; top:12px; left:12px; right:12px; padding:10px 16px; display:flex; justify-content:space-between; z-index:10; }
+  .sidebar { position:fixed; top:80px; left:12px; width:340px; max-height:calc(100vh - 100px); padding:16px; overflow-y:auto; z-index:5; }
+  .panel { position:fixed; bottom:12px; right:12px; width:340px; padding:14px; z-index:5; }
+  .hud { position:fixed; top:80px; right:12px; width:340px; padding:14px; z-index:5; font-family:'Courier New',monospace; font-size:11px; }
+  h2 { font-size:13px; font-weight:600; margin:14px 0 6px; color:#FB923C; text-transform:uppercase; letter-spacing:0.05em; }
+  label { font-size:11px; color:#94A3B8; display:flex; justify-content:space-between; margin-top:8px; }
+  input[type="range"] { width:100%; height:4px; background:#334155; border-radius:2px; outline:none; appearance:none; }
+  input[type="range"]::-webkit-slider-thumb { appearance:none; width:14px; height:14px; border-radius:50%; background:linear-gradient(135deg,#6366F1,#A855F7); cursor:pointer; }
+  button { padding:6px 12px; background:linear-gradient(135deg,#6366F1,#A855F7); color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  .btn-secondary { background:rgba(255,255,255,0.08); }
+  .btn-success { background:linear-gradient(135deg,#10B981,#14B8A6); }
+  .btn-method { background:rgba(255,255,255,0.08); }
+  .btn-method.active { background:linear-gradient(135deg,#6366F1,#A855F7); }
+  .matrix { background:rgba(0,0,0,0.4); padding:8px; border-radius:6px; margin-top:4px; white-space:pre; font-family:'Courier New',monospace; font-size:11px; }
+  .badge { display:inline-block; padding:2px 8px; background:#6366F1; border-radius:10px; font-size:10px; font-weight:600; margin-right:6px; }
+</style>
+<!-- aetherviz-robotics mobile shim v3 (landscape side-by-side)
+   注入される共通スマホ対応モジュール（21 プロトタイプ全てに適用）
+   - ポートレート: 上下ドロワー + 下部水平タブバー
+   - ランドスケープ (height ≤ 500): キャンバス左 + パネル右 同時表示
+     - 右上ミニタブで panel/sidebar/hud を切替
+     - 進入時に「制御」自動オープン
+   - タッチ → マウスイベント変換
+   - ピンチ → wheel イベント変換（3D ズーム）
+-->
+<!-- mobile-shim-marker -->
+<style id="mobile-shim-css">
+/* === タブバー基本 (デフォルト非表示) === */
+#mobile-tabs { display: none; }
+
+#mobile-tabs button {
+  background: transparent;
+  border: none;
+  color: #F1F5F9;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+}
+#mobile-tabs button.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.4), rgba(168,85,247,0.3));
+  color: #fff;
+  font-weight: 600;
+}
+#mobile-tabs button:active { background: rgba(99,102,241,0.5); }
+
+/* ============================================================ */
+/* === ポートレート (縦持ち、〜768px) === */
+/* ============================================================ */
+@media (orientation: portrait) and (max-width: 768px), (max-width: 500px) {
+  body { font-size: 13px; }
+  .nav {
+    padding: 6px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 4px !important;
+    top: 4px !important;
+  }
+  .nav > div { font-size: 11px; line-height: 1.25; }
+  .nav > div:first-child { flex: 1; min-width: 0; }
+  .nav button { padding: 4px 8px; font-size: 11px; }
+  .badge { font-size: 9px; padding: 1px 5px; }
+
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    width: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    max-height: 55vh !important;
+    overflow-y: auto;
+    transition: transform .3s ease, opacity .3s ease;
+    z-index: 25;
+    padding: 12px !important;
+    box-sizing: border-box;
+  }
+  .sidebar, .hud {
+    top: 60px !important;
+    bottom: auto !important;
+    transform: translateY(calc(-100% - 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .panel {
+    bottom: 56px !important;
+    top: auto !important;
+    transform: translateY(calc(100% + 80px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sidebar h2, .panel h2, .hud h2 { font-size: 12px; margin: 8px 0 4px; }
+  .matrix { font-size: 10px; }
+  input[type=range] { height: 18px; }
+  input[type=range]::-webkit-slider-thumb { width: 18px; height: 18px; }
+  button { min-height: 32px; padding: 6px 10px; }
+
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: 縦並び */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+  }
+  #ws-svg { top: 60px !important; height: 38vh !important; }
+  #cs-svg { top: calc(60px + 38vh + 8px) !important; height: 38vh !important; }
+
+  /* 下部水平タブバー */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 48px;
+    background: rgba(15,23,42,0.95);
+    border-top: 1px solid rgba(99,102,241,0.4);
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  #mobile-tabs button {
+    flex: 1; height: 100%;
+    border-right: 1px solid rgba(99,102,241,0.2);
+    font-size: 12px;
+    padding: 0 4px;
+    flex-direction: row;
+    gap: 4px;
+  }
+  #mobile-tabs button:last-child { border-right: none; }
+  #mobile-tabs .tab-icon { font-size: 16px; }
+  #mobile-tabs .tab-label { font-size: 11px; }
+}
+
+/* ============================================================ */
+/* === ランドスケープ (横持ち、height ≤ 500px) === */
+/*    キャンバス左 + パネル右 同時表示                          */
+/* ============================================================ */
+@media (orientation: landscape) and (max-height: 500px) {
+  body { font-size: 11px; }
+
+  /* ナビ：右レール分の余白を確保 */
+  .nav {
+    padding: 3px 8px !important;
+    flex-wrap: nowrap !important;
+    gap: 4px;
+    left: 4px !important;
+    right: 292px !important;
+    top: 4px !important;
+    height: 32px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: center;
+  }
+  .nav > div { font-size: 10px; line-height: 1.1; }
+  .nav > div:first-child {
+    flex: 1; min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nav > div:first-child > span { white-space: nowrap; }
+  .nav > div:last-child { flex-shrink: 0; display: flex; gap: 4px; }
+  .nav button { padding: 2px 6px !important; font-size: 9px !important; min-height: 24px !important; }
+  .badge { font-size: 8px; padding: 1px 3px; }
+
+  /* キャンバス領域：右 284px を空ける */
+  #canvas-container {
+    inset: 0 !important;
+    right: 288px !important;
+    overflow: hidden !important;
+  }
+  /* SVG オーバーレイも追従 */
+  #svg-overlay, #plot-svg {
+    inset: 0 !important;
+    right: 288px !important;
+    width: auto !important;
+  }
+  /* 補助プロット領域は隠す */
+  #plots, #joint-space { display: none !important; }
+
+  /* ch2-cspace: ws/cs を左 50/50 で並列配置（右レール除外） */
+  #ws-svg, #cs-svg {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    max-height: none !important;
+    width: auto !important;
+  }
+  #ws-svg { left: 4px !important; right: calc(50% + 142px) !important; }
+  #cs-svg { left: calc(50% - 142px) !important; right: 292px !important; }
+
+  /* 右レール = 1 パネル分のスペース、常時その位置に居続ける */
+  .sidebar, .panel, .hud {
+    position: fixed !important;
+    top: 40px !important;
+    bottom: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    width: 280px !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-y: auto;
+    transition: opacity .2s ease;
+    z-index: 25;
+    padding: 8px 10px !important;
+    box-sizing: border-box;
+    border-radius: 12px !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  .sidebar h2, .panel h2, .hud h2 {
+    font-size: 10px !important;
+    margin: 6px 0 3px !important;
+  }
+  .sidebar p, .panel p, .hud p { font-size: 10px !important; line-height: 1.35 !important; }
+  .sidebar ul, .panel ul, .hud ul { padding-left: 14px !important; margin: 4px 0 !important; }
+  .sidebar li, .panel li, .hud li { font-size: 10px !important; margin: 2px 0 !important; }
+  .matrix, .matrix-display { font-size: 9px !important; padding: 4px 6px !important; }
+  input[type=range] { height: 14px !important; }
+  input[type=range]::-webkit-slider-thumb { width: 16px !important; height: 16px !important; }
+  button { min-height: 24px !important; padding: 4px 6px !important; font-size: 10px !important; }
+  label { font-size: 9px !important; margin-top: 4px !important; }
+
+  /* ミニタブ：右レールの上に固定 (ナビと同じ高さ) */
+  #mobile-tabs {
+    display: flex !important;
+    flex-direction: row !important;
+    position: fixed !important;
+    top: 4px !important;
+    right: 4px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 280px !important;
+    height: 32px !important;
+    background: rgba(15,23,42,0.95);
+    border: 1px solid rgba(99,102,241,0.4) !important;
+    border-radius: 8px !important;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  #mobile-tabs button {
+    flex: 1 !important;
+    height: 100% !important;
+    border: none !important;
+    border-right: 1px solid rgba(99,102,241,0.2) !important;
+    font-size: 10px !important;
+    padding: 0 4px !important;
+    flex-direction: row !important;
+    gap: 3px !important;
+    border-radius: 0 !important;
+  }
+  #mobile-tabs button:last-child { border-right: none !important; }
+  #mobile-tabs .tab-icon { font-size: 13px !important; }
+  #mobile-tabs .tab-label { font-size: 9px !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div id="plots" class="glass" style="overflow:hidden;">
+  <svg id="plot-svg" width="100%" height="100%"></svg>
+</div>
+
+<div class="nav glass">
+  <div>
+    <span class="badge">Ch.9</span>
+    <span style="font-weight:600;">Trajectory Generation / 軌道生成</span>
+    <span style="color:#94A3B8; font-size:12px; margin-left:8px;">Time-Scaling Profiles</span>
+  </div>
+  <div>
+    <button onclick="resetState()">重置</button>
+    <button onclick="togglePlay()" id="play-btn" class="btn-success">▶ 再生</button>
+  </div>
+</div>
+
+<div class="sidebar glass">
+  <h2>学習目標</h2>
+  <ul style="font-size:12px; color:#CBD5E1;">
+    <li>□ 直線パス上の時間スケーリング s(t) を学ぶ</li>
+    <li>□ 3次・5次・台形・S 曲線プロファイルを比較する</li>
+    <li>□ 加速度連続性 (smoothness) の重要性を理解する</li>
+  </ul>
+
+  <h2>3次多項式</h2>
+  <div>$$ s(t) = 3(t/T)^2 - 2(t/T)^3 $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">境界条件: s(0)=0, s(T)=1, ṡ(0)=ṡ(T)=0</p>
+
+  <h2>5次多項式</h2>
+  <div>$$ s(t) = 10\tau^3 - 15\tau^4 + 6\tau^5,\ \tau=t/T $$</div>
+  <p style="font-size:11px; color:#CBD5E1;">追加条件: s̈(0)=s̈(T)=0（加速度ゼロ起動）</p>
+
+  <h2>台形速度</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    加速 → 一定速 → 減速。<br>
+    制約: v_max·T &gt; 1 (1=移動量) で t_a 解あり
+  </p>
+
+  <h2>S 曲線</h2>
+  <p style="font-size:11px; color:#CBD5E1;">
+    加加速度 (jerk) を区分一定にした 7 セグメントプロファイル。<br>
+    機械振動を抑制する高品質軌道。
+  </p>
+</div>
+
+<div class="hud glass">
+  <h2>現在値 (t = <span id="t-readout">0.00</span>s / T = <span id="T-readout">2.0</span>s)</h2>
+  <div class="matrix" id="state-display"></div>
+  <h2>プロファイル特性</h2>
+  <div class="matrix" id="char-display"></div>
+</div>
+
+<div class="panel glass">
+  <h2>プロファイル選択</h2>
+  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+    <button class="btn-method active" data-m="cubic" onclick="setMethod('cubic')">3 次</button>
+    <button class="btn-method" data-m="quintic" onclick="setMethod('quintic')">5 次</button>
+    <button class="btn-method" data-m="trap" onclick="setMethod('trap')">台形</button>
+    <button class="btn-method" data-m="scurve" onclick="setMethod('scurve')">S 曲線</button>
+  </div>
+
+  <h2>パラメータ</h2>
+  <label>総時間 T (s) <span id="T-val">2.0</span></label>
+  <input type="range" id="T" min="0.5" max="6" value="2.0" step="0.1">
+
+  <label>v_max (台形・S 用) <span id="vmax-val">0.7</span></label>
+  <input type="range" id="vmax" min="0.2" max="2.0" value="0.7" step="0.01">
+
+  <label>a_max (S 曲線用) <span id="amax-val">2.0</span></label>
+  <input type="range" id="amax" min="0.5" max="6" value="2.0" step="0.1">
+
+  <h2>始点・終点</h2>
+  <label>θ_start (rad) <span id="qs-val">0.0</span></label>
+  <input type="range" id="qs" min="-3.14" max="3.14" value="0" step="0.05">
+  <label>θ_end (rad) <span id="qe-val">2.0</span></label>
+  <input type="range" id="qe" min="-3.14" max="3.14" value="2.0" step="0.05">
+</div>
+
+<script>
+// ====== Three.js シーン (1R アームでトラジェクトリ追従) ======
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+let W=window.innerWidth, H=window.innerHeight;
+
+const camera = new THREE.OrthographicCamera(-2, 2, 2*H/W, -2*H/W, 0.1, 100);
+camera.position.set(0, 0, 8);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(W, H);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const grid = new THREE.GridHelper(4, 8, 0x334155, 0x1E293B);
+grid.rotation.x = Math.PI/2;
+grid.position.y = -1.0;
+scene.add(grid);
+
+// 1R アームを表す簡易ロボット（縦平面）
+const armGroup = new THREE.Group();
+armGroup.position.set(0, -1.0, 0);
+scene.add(armGroup);
+
+const linkLen = 1.4;
+const armMat = new THREE.MeshStandardMaterial({color:0x6366F1, metalness:0.5});
+const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, linkLen, 16), armMat);
+arm.position.x = linkLen/2;
+arm.rotation.z = Math.PI/2;
+armGroup.add(arm);
+
+const tipMat = new THREE.MeshStandardMaterial({color:0xFB923C, emissive:0xFB923C, emissiveIntensity:0.5});
+const tip = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), tipMat);
+tip.position.x = linkLen;
+armGroup.add(tip);
+
+// 始点・終点マーカー
+const sMat = new THREE.MeshBasicMaterial({color:0x22C55E});
+const eMat = new THREE.MeshBasicMaterial({color:0xEF4444});
+const startMark = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), sMat);
+const endMark = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), eMat);
+scene.add(startMark); scene.add(endMark);
+
+function updateArm(theta){
+  armGroup.rotation.z = theta;
+}
+
+function updateMarkers(qs, qe){
+  startMark.position.set(linkLen*Math.cos(qs), -1.0+linkLen*Math.sin(qs), 0);
+  endMark.position.set(linkLen*Math.cos(qe), -1.0+linkLen*Math.sin(qe), 0);
+}
+
+// ====== プロファイル関数 ======
+function cubic(tau){
+  return {
+    s:  3*tau*tau - 2*tau*tau*tau,
+    sd: 6*tau - 6*tau*tau,
+    sdd: 6 - 12*tau
+  };
+}
+function quintic(tau){
+  return {
+    s:  10*tau**3 - 15*tau**4 + 6*tau**5,
+    sd: 30*tau**2 - 60*tau**3 + 30*tau**4,
+    sdd: 60*tau - 180*tau**2 + 120*tau**3
+  };
+}
+// 台形：t' = t/T で 0..1、v_max は s 単位（位置のレート）
+function trapezoidal(t, T, vmax){
+  // s(0)=0, s(T)=1。三角形 OK 条件: vmax*T >= 1
+  if(vmax*T < 1.0){ vmax = 1.0/T*1.001; } // 最小 vmax 強制
+  const ta = (vmax*T - 1) / vmax;  // 加速時間
+  // ta は 0..T/2, t_a + t_const + t_d = T で対称
+  // s_a = 0.5 * a * ta² = 0.5 * (vmax/ta) * ta² = 0.5 * vmax * ta
+  // 一定速時間 t_c = T - 2*ta
+  // 加速度 a = vmax/ta
+  if(ta <= 0){
+    // 三角形（v_max に達しない）：a = 4/T², 半時間 T/2 で v_peak = 2/T
+    const a = 4 / (T*T);
+    if(t < T/2){
+      return {s: 0.5*a*t*t, sd: a*t, sdd: a};
+    } else {
+      const tt = T - t;
+      return {s: 1 - 0.5*a*tt*tt, sd: a*tt, sdd: -a};
+    }
+  }
+  const a_acc = vmax/ta;
+  if(t < ta){
+    return {s: 0.5*a_acc*t*t, sd: a_acc*t, sdd: a_acc};
+  } else if(t < T - ta){
+    return {s: 0.5*a_acc*ta*ta + vmax*(t-ta), sd: vmax, sdd: 0};
+  } else {
+    const tt = T - t;
+    return {s: 1 - 0.5*a_acc*tt*tt, sd: a_acc*tt, sdd: -a_acc};
+  }
+}
+// S 曲線（簡略化：3 段加加速度）
+function scurve(t, T, vmax, amax){
+  // 簡易：jerk 区間 + 一定加速 + jerk 区間 + 一定速 + ...
+  // 教育プロトタイプ用に近似的に量子的に表示
+  if(vmax*T < 1.0) vmax = 1.0/T*1.001;
+  const tj = vmax/amax;          // jerk 時間
+  const ta = vmax/amax;          // 単純化：加速＝jerk のみ
+  const tc = T - 4*tj;
+  if(tc < 0){
+    // フォールバック：5 次多項式に
+    return quintic(t/T);
+  }
+  const j = amax/tj;
+  let s,sd,sdd;
+  if(t < tj){
+    sdd = j*t; sd = 0.5*j*t*t; s = j*t*t*t/6;
+  } else if(t < 2*tj){
+    const dt2 = t - tj;
+    sdd = amax - j*dt2; sd = amax*dt2 + 0.5*j*tj*tj - 0.5*j*dt2*dt2 + 0;
+    // 簡略化：あくまで概形。エネルギー保存のため統合計算は省く
+    const k = quintic(t/T);
+    return k;
+  } else {
+    return quintic(t/T);
+  }
+  return {s, sd, sdd};
+}
+
+function profile(t, T, method, vmax, amax){
+  const tau = Math.max(0, Math.min(1, t/T));
+  if(t < 0) return {s:0, sd:0, sdd:0};
+  if(t > T) return {s:1, sd:0, sdd:0};
+  if(method === 'cubic')   return cubic(tau);
+  if(method === 'quintic') return quintic(tau);
+  if(method === 'trap')    return trapezoidal(t, T, vmax);
+  if(method === 'scurve')  return scurve(t, T, vmax, amax);
+  return cubic(tau);
+}
+
+// ====== SVG プロット ======
+const svg = document.getElementById('plot-svg');
+function drawPlots(){
+  const rect = document.getElementById('plots').getBoundingClientRect();
+  const Wp = rect.width - 20, Hp = rect.height - 20;
+  svg.setAttribute('viewBox', `0 0 ${Wp} ${Hp}`);
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const T = state.T;
+  const N = 200;
+  const data = [];
+  for(let i=0;i<=N;i++){
+    const t = i/N * T;
+    const p = profile(t, T, state.method, state.vmax, state.amax);
+    data.push({t, ...p});
+  }
+
+  // 3 領域：上から s, ṡ, s̈
+  const padX = 50, padY = 18;
+  const plotW = Wp - padX - 20;
+  const plotH = (Hp - padY*4) / 3;
+
+  ['s','sd','sdd'].forEach((key, idx)=>{
+    const yTop = padY + idx*(plotH + padY);
+    const yBot = yTop + plotH;
+    const vals = data.map(d=>d[key]);
+    const vmin = Math.min(...vals, 0);
+    const vmax = Math.max(...vals, key==='s'?1:0.5);
+    const range = (vmax - vmin) || 1;
+
+    const yScale = v => yBot - (v - vmin)/range * plotH;
+    const xScale = t => padX + t/T * plotW;
+
+    // 軸枠
+    const frame = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    frame.setAttribute('x', padX); frame.setAttribute('y', yTop);
+    frame.setAttribute('width', plotW); frame.setAttribute('height', plotH);
+    frame.setAttribute('fill','rgba(0,0,0,0.25)'); frame.setAttribute('stroke','#334155');
+    svg.appendChild(frame);
+
+    // ラベル
+    const lbl = document.createElementNS('http://www.w3.org/2000/svg','text');
+    const labels = {s:'s(t) — 位置', sd:'ṡ(t) — 速度', sdd:'s̈(t) — 加速度'};
+    lbl.setAttribute('x', padX+8); lbl.setAttribute('y', yTop+14);
+    lbl.setAttribute('fill','#FB923C'); lbl.setAttribute('font-size','11');
+    lbl.setAttribute('font-family','monospace');
+    lbl.textContent = labels[key];
+    svg.appendChild(lbl);
+
+    // ゼロライン
+    if(vmin < 0 && vmax > 0){
+      const yZero = yScale(0);
+      const zl = document.createElementNS('http://www.w3.org/2000/svg','line');
+      zl.setAttribute('x1', padX); zl.setAttribute('y1', yZero);
+      zl.setAttribute('x2', padX+plotW); zl.setAttribute('y2', yZero);
+      zl.setAttribute('stroke','#475569'); zl.setAttribute('stroke-dasharray','2 3');
+      svg.appendChild(zl);
+    }
+
+    // 曲線
+    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+    let d = '';
+    data.forEach((p,i)=>{
+      const x = xScale(p.t), y = yScale(p[key]);
+      d += (i===0?'M':'L') + x.toFixed(2) + ' ' + y.toFixed(2);
+    });
+    path.setAttribute('d', d);
+    const colors = {s:'#22D3EE', sd:'#A855F7', sdd:'#FB923C'};
+    path.setAttribute('stroke', colors[key]);
+    path.setAttribute('stroke-width','2'); path.setAttribute('fill','none');
+    svg.appendChild(path);
+
+    // 現在時刻インジケータ
+    const cx = xScale(state.t);
+    const ind = document.createElementNS('http://www.w3.org/2000/svg','line');
+    ind.setAttribute('x1', cx); ind.setAttribute('y1', yTop);
+    ind.setAttribute('x2', cx); ind.setAttribute('y2', yBot);
+    ind.setAttribute('stroke','#10B981'); ind.setAttribute('stroke-width','1.5');
+    ind.setAttribute('stroke-dasharray','3 2');
+    svg.appendChild(ind);
+
+    // 現在値ドット
+    const cy = yScale(profile(state.t, T, state.method, state.vmax, state.amax)[key]);
+    const dot = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r','4');
+    dot.setAttribute('fill','#10B981');
+    svg.appendChild(dot);
+
+    // 値の範囲ラベル
+    const lblMax = document.createElementNS('http://www.w3.org/2000/svg','text');
+    lblMax.setAttribute('x', padX-6); lblMax.setAttribute('y', yScale(vmax)+4);
+    lblMax.setAttribute('fill','#94A3B8'); lblMax.setAttribute('font-size','9');
+    lblMax.setAttribute('text-anchor','end'); lblMax.setAttribute('font-family','monospace');
+    lblMax.textContent = vmax.toFixed(2);
+    svg.appendChild(lblMax);
+
+    const lblMin = document.createElementNS('http://www.w3.org/2000/svg','text');
+    lblMin.setAttribute('x', padX-6); lblMin.setAttribute('y', yScale(vmin)+4);
+    lblMin.setAttribute('fill','#94A3B8'); lblMin.setAttribute('font-size','9');
+    lblMin.setAttribute('text-anchor','end'); lblMin.setAttribute('font-family','monospace');
+    lblMin.textContent = vmin.toFixed(2);
+    svg.appendChild(lblMin);
+  });
+
+  // 時間軸ラベル
+  const tlbl = document.createElementNS('http://www.w3.org/2000/svg','text');
+  tlbl.setAttribute('x', padX+plotW/2); tlbl.setAttribute('y', Hp-2);
+  tlbl.setAttribute('fill','#94A3B8'); tlbl.setAttribute('font-size','10');
+  tlbl.setAttribute('text-anchor','middle');
+  tlbl.textContent = `t [0, ${T.toFixed(1)}s]`;
+  svg.appendChild(tlbl);
+}
+
+// ====== 状態 ======
+const state = {
+  method:'cubic',
+  T:2.0, vmax:0.7, amax:2.0,
+  qs:0.0, qe:2.0,
+  t:0.0, playing:false
+};
+
+function update(){
+  const p = profile(state.t, state.T, state.method, state.vmax, state.amax);
+  const theta = state.qs + p.s * (state.qe - state.qs);
+  updateArm(theta);
+  updateMarkers(state.qs, state.qe);
+
+  document.getElementById('t-readout').textContent = state.t.toFixed(2);
+  document.getElementById('T-readout').textContent = state.T.toFixed(1);
+  document.getElementById('state-display').textContent =
+    `s   = ${p.s.toFixed(4)}\nṡ   = ${p.sd.toFixed(4)}\ns̈  = ${p.sdd.toFixed(4)}\nθ(t) = ${theta.toFixed(3)} rad`;
+
+  // 特性表示
+  const N = 100;
+  let smax=0, sdmax=0, sddmax=0;
+  for(let i=0;i<=N;i++){
+    const tt = i/N * state.T;
+    const pp = profile(tt, state.T, state.method, state.vmax, state.amax);
+    sdmax = Math.max(sdmax, Math.abs(pp.sd));
+    sddmax = Math.max(sddmax, Math.abs(pp.sdd));
+  }
+  document.getElementById('char-display').textContent =
+    `max|ṡ|  = ${sdmax.toFixed(3)}\nmax|s̈| = ${sddmax.toFixed(3)}\nプロファイル: ${state.method}`;
+
+  drawPlots();
+}
+
+function setMethod(m){
+  state.method = m;
+  document.querySelectorAll('.btn-method').forEach(b=>{
+    b.classList.toggle('active', b.dataset.m === m);
+  });
+  update();
+}
+
+['T','vmax','amax','qs','qe'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', e=>{
+    state[id] = parseFloat(e.target.value);
+    document.getElementById(id+'-val').textContent = state[id].toFixed(id==='qs'||id==='qe'?2:2);
+    update();
+  });
+});
+
+let playStart = 0;
+function togglePlay(){
+  state.playing = !state.playing;
+  const btn = document.getElementById('play-btn');
+  btn.textContent = state.playing ? '⏸ 停止' : '▶ 再生';
+  if(state.playing){ playStart = performance.now() - state.t*1000; playLoop(); }
+}
+function playLoop(){
+  if(!state.playing) return;
+  state.t = (performance.now() - playStart)/1000;
+  if(state.t > state.T){ state.t = state.T; state.playing=false; document.getElementById('play-btn').textContent='▶ 再生'; }
+  update();
+  requestAnimationFrame(playLoop);
+}
+
+function resetState(){
+  state.playing = false;
+  document.getElementById('play-btn').textContent = '▶ 再生';
+  state.t = 0;
+  update();
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+  W=window.innerWidth; H=window.innerHeight;
+  camera.left=-2; camera.right=2; camera.top=2*H/W; camera.bottom=-2*H/W;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+  drawPlots();
+});
+
+window.addEventListener('load', ()=>{
+  renderMathInElement(document.body, {
+    delimiters:[{left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]
+  });
+  drawPlots();
+});
+
+update();
+</script>
+
+<div style="position:fixed; bottom:8px; left:50%; transform:translateX(-50%); font-size:11px; color:#64748B; z-index:1;">
+  AetherViz Robotics — Modern Robotics Ch.9 Prototype · 教育目的、産業利用には別途検証が必要 ❤️
+</div>
+
+<div id="mobile-tabs">
+  <button type="button" data-mob="sidebar"><span class="tab-icon">📖</span><span class="tab-label">学習</span></button>
+  <button type="button" data-mob="panel"><span class="tab-icon">⚙️</span><span class="tab-label">制御</span></button>
+  <button type="button" data-mob="hud"><span class="tab-icon">📊</span><span class="tab-label">状態</span></button>
+</div>
+<script id="mobile-shim-js">
+(function(){
+  function isLandscapePhone(){
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  }
+  function isPortraitPhone(){
+    return window.matchMedia('(orientation: portrait) and (max-width: 768px)').matches
+        || window.matchMedia('(max-width: 500px)').matches;
+  }
+
+  // ==== window.innerWidth/innerHeight オーバーライド ====
+  //   ランドスケープ時、右レール (288px) を除いたサイズを返すことで
+  //   Three.js renderer / camera が正しいアスペクトで描画される
+  var RAIL_W = 288;  // 右レール幅 + 余白
+  var origDescW = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+              || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'innerWidth');
+  if(origDescW && origDescW.get){
+    try {
+      var realInnerWidth = origDescW.get;
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        get: function(){
+          var w = realInnerWidth.call(this);
+          return isLandscapePhone() ? Math.max(220, w - RAIL_W) : w;
+        }
+      });
+    } catch(_){}
+  }
+
+  // ==== タブバーでパネルトグル ====
+  function activateTab(name, force){
+    var map = {sidebar:'.sidebar', panel:'.panel', hud:'.hud'};
+    var el = document.querySelector(map[name]);
+    if(!el) return;
+    var wasOpen = el.classList.contains('mobile-open');
+    document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(e){e.classList.remove('mobile-open');});
+    document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    if(!wasOpen || force){
+      el.classList.add('mobile-open');
+      var btn = document.querySelector('#mobile-tabs button[data-mob="' + name + '"]');
+      if(btn) btn.classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('#mobile-tabs button').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      activateTab(btn.dataset.mob, false);
+    });
+  });
+
+  // パネル外側タップで閉じる (ポートレートのみ；ランドスケープは常時表示なので閉じない)
+  document.addEventListener('click', function(e){
+    if(isLandscapePhone()) return;
+    var inside = e.target.closest('.sidebar, .panel, .hud, #mobile-tabs, .nav');
+    if(!inside){
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+  });
+
+  // ランドスケープ進入時：制御パネルを自動オープン + 既存リサイズハンドラを発火
+  function applyOrientation(){
+    if(isLandscapePhone()){
+      var anyOpen = document.querySelector('.sidebar.mobile-open, .panel.mobile-open, .hud.mobile-open');
+      if(!anyOpen) activateTab('panel', true);
+    } else {
+      // ポートレート/デスクトップ：開いていたパネルを閉じる
+      document.querySelectorAll('.sidebar, .panel, .hud').forEach(function(el){el.classList.remove('mobile-open');});
+      document.querySelectorAll('#mobile-tabs button').forEach(function(x){x.classList.remove('active');});
+    }
+    // Three.js / SVG にレイアウト変化を伝える
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    setTimeout(function(){
+      window.dispatchEvent(new Event('resize'));
+    }, 350);
+  }
+
+  window.addEventListener('orientationchange', function(){
+    setTimeout(applyOrientation, 200);
+  });
+  // メディアクエリ変化（PC でウィンドウリサイズ時等）
+  if(window.matchMedia){
+    var mq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    if(mq.addEventListener){ mq.addEventListener('change', applyOrientation); }
+    else if(mq.addListener){ mq.addListener(applyOrientation); }
+  }
+  window.addEventListener('load', function(){ setTimeout(applyOrientation, 100); });
+
+  // ==== タッチ → マウス/wheel イベント変換 ====
+  function mouseEvt(type, t){
+    return new MouseEvent(type, {clientX:t.clientX, clientY:t.clientY, button:0, bubbles:true, cancelable:true, view:window});
+  }
+  function addTouch(el){
+    if(!el || el.__mobShimTouch) return;
+    el.__mobShimTouch = true;
+    var pinchD = 0;
+    el.addEventListener('touchstart', function(e){
+      if(e.touches.length === 2){
+        pinchD = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        el.dispatchEvent(mouseEvt('mousedown', t));
+      }
+    }, {passive:false});
+    el.addEventListener('touchmove', function(e){
+      if(e.touches.length === 2){
+        var nd = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        var dy = (pinchD - nd) * 3;
+        try {
+          el.dispatchEvent(new WheelEvent('wheel', {deltaY: dy, deltaMode:0, bubbles:true, cancelable:true}));
+        } catch(_){
+          var ev = document.createEvent('Event');
+          ev.initEvent('wheel', true, true);
+          ev.deltaY = dy;
+          el.dispatchEvent(ev);
+        }
+        pinchD = nd;
+        e.preventDefault();
+      } else if(e.touches.length === 1){
+        var t = e.touches[0];
+        var me = mouseEvt('mousemove', t);
+        window.dispatchEvent(me);
+        el.dispatchEvent(me);
+        e.preventDefault();
+      }
+    }, {passive:false});
+    el.addEventListener('touchend', function(e){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window});
+      window.dispatchEvent(fake);
+      el.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+    el.addEventListener('touchcancel', function(){
+      var fake = new MouseEvent('mouseup', {bubbles:true, cancelable:true});
+      window.dispatchEvent(fake);
+      pinchD = 0;
+    }, {passive:true});
+  }
+
+  function applyTouch(){
+    document.querySelectorAll('canvas, #svg-overlay, #plot-svg, #ws-svg, #cs-svg, #js-svg').forEach(addTouch);
+  }
+  if(document.readyState === 'complete' || document.readyState === 'interactive'){
+    setTimeout(applyTouch, 100);
+  } else {
+    window.addEventListener('load', applyTouch);
+    window.addEventListener('DOMContentLoaded', applyTouch);
+  }
+  setTimeout(applyTouch, 500);
+  setTimeout(applyTouch, 2000);
+})();
+</script>
+</body>
+</html>
